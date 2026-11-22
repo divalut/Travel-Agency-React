@@ -142,6 +142,15 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .fact { display: grid; gap: 2px; min-width: 0; }
 .fact b { font-weight: 600; overflow-wrap: anywhere; }
 footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
+/* 15-minute steps */
+.stepgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 380px) { .stepgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stepcell { border-radius: 10px; padding: 10px 8px; background: var(--sunk); display: grid; gap: 2px; text-align: center; min-width: 0; border-top: 3px solid var(--line); }
+.stepcell.up { border-top-color: var(--up); } .stepcell.down { border-top-color: var(--down); } .stepcell.sideways { border-top-color: var(--flat); }
+.stepcell .t { font-size: 0.75rem; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
+.stepcell .d { font-family: var(--font-display); font-weight: 800; font-size: 0.95rem; white-space: nowrap; }
+.stepcell.up .d { color: var(--up); } .stepcell.down .d { color: var(--down); } .stepcell.sideways .d { color: var(--flat); }
+.stepcell .rng { font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); overflow-wrap: anywhere; }
 </style>
 
 <main>
@@ -167,10 +176,13 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
     <div class="section">
       <span class="eyebrow" id="hz-l">Forecast window</span>
       <div class="seg" role="radiogroup" aria-labelledby="hz-l">
+        <input type="radio" name="hz" id="hz0a" value="15 minutes" data-intraday="1"><label for="hz0a">15 min</label>
+        <input type="radio" name="hz" id="hz0b" value="1 hour" data-intraday="1"><label for="hz0b">1 hour</label>
         <input type="radio" name="hz" id="hz1" value="1 week"><label for="hz1">1 week</label>
         <input type="radio" name="hz" id="hz2" value="1–4 weeks" checked><label for="hz2">1–4 weeks</label>
         <input type="radio" name="hz" id="hz3" value="3 months"><label for="hz3">3 months</label>
       </div>
+      <p class="muted" id="hz-note" style="font-size:0.85rem" hidden>Short forecasts come in 15-minute steps for the next hour. They work best with a 1-, 5- or 15-minute chart screenshot taken while the market is open.</p>
     </div>
 
     <div class="actions">
@@ -281,6 +293,8 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
       ticker: /^[A-Z0-9.\-]{1,10}$/.test(tk) ? tk : null,
       company: typeof r.company_or_asset === "string" ? r.company_or_asset : null,
       timeframe: typeof r.timeframe === "string" ? r.timeframe : null,
+      bar_interval: typeof r.bar_interval === "string" ? r.bar_interval : null,
+      last_time: typeof r.last_bar_time === "string" ? r.last_bar_time : null,
       chart_type: typeof r.chart_type === "string" ? r.chart_type : "chart",
       current_price: num(r.current_price) ?? (pts.length ? pts[pts.length - 1].close : null),
       price_points: pts,
@@ -302,6 +316,13 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
       })),
       bull: String(v.bull_case || ""), bear: String(v.bear_case || ""), levels: String(v.key_levels || ""),
       risks: (Array.isArray(v.risks) ? v.risks : []).map(String).slice(0, 8),
+      steps: (Array.isArray(v.steps) ? v.steps : []).slice(0, 4).map((s, i) => {
+        let sp = num(s?.probability_up); if (sp != null && sp > 1) sp /= 100; sp = Math.min(0.9, Math.max(0.1, sp ?? 0.5));
+        let lo = num(s?.low), hi = num(s?.high); if (lo != null && hi != null && lo > hi) [lo, hi] = [hi, lo];
+        return { minutes: num(s?.minutes) ?? (i + 1) * 15, direction: pick(s?.direction, ["up", "down", "sideways"], sp > 0.53 ? "up" : sp < 0.47 ? "down" : "sideways"),
+          p: sp, low: lo, high: hi, note: String(s?.note || "") };
+      }),
+      steps_basis: String(v.steps_basis || ""),
     };
   }
 
@@ -310,14 +331,22 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
 Read the y-axis scale carefully, then sample 25-60 evenly spaced approximate closing prices across the whole visible range, oldest (left) to newest (right). For candlesticks use each candle's close.
 Reply with only this JSON object:
 {"is_stock_chart": true, "ticker": "AAPL or null", "company_or_asset": "name or null", "timeframe": "e.g. 6M daily, or null",
- "chart_type": "candlestick|line|bar|area|other", "current_price": 123.45,
+ "chart_type": "candlestick|line|bar|area|other", "bar_interval": "1min|5min|15min|1h|1D|1W or null",
+ "last_bar_time": "time/date of the newest bar if shown, or null", "current_price": 123.45,
  "price_points": [{"label": "Oct 3", "close": 120.1}],
  "visible_indicators": ["SMA 50", "RSI 14 at ~68"], "support_levels": [115.0], "resistance_levels": [130.0],
  "patterns": ["ascending triangle"], "volume_observation": "text or null",
  "reading_notes": "how legible the chart was and what is uncertain"}
 If the image is not a price chart, set is_stock_chart to false and leave the lists empty.`;
 
-  function verdictPrompt(payload) {
+  const STEPS_SPEC = `
+This is a SHORT-TERM forecast. Also forecast the next hour in four 15-minute steps, cumulative from the latest price (step 1 = price 15 minutes from now, step 4 = 60 minutes from now).
+Base the steps on the chart's bar interval and recent momentum, the real 15-minute bars if present, and typical 15-minute volatility for this kind of stock. Keep probability_up between 0.40 and 0.60 unless the evidence is unusually strong: 15-minute moves are mostly noise. Give a plausible price range for each step that widens with time. If the market is probably closed (judge from the latest bar time and today's date), say in steps_basis that the steps apply to the next open.
+Add to the JSON object:
+ "steps": [{"minutes": 15, "direction": "up|down|sideways", "probability_up": 0.52, "low": 123.1, "high": 124.0, "note": "few words"}, ... for 15, 30, 45, 60],
+ "steps_basis": "one sentence on what the steps are based on"`;
+
+  function verdictPrompt(payload, intraday) {
     return `You are a disciplined market analyst producing a probabilistic call, not a promise.
 Weigh every method below: chart patterns and levels, indicators computed from the screenshot (approximate — weight lower), indicators computed from real daily closes (when present — weight higher), recent news sentiment (when present), and what technical-analysis research generally finds about how reliable the specific patterns seen are.
 Rules: short-horizon moves are close to a coin flip, so probability_up should rarely be outside 0.30-0.70; use "high" confidence only when independent methods strongly agree. If real data and the screenshot disagree, trust the real data and say so. Do not invent news.
@@ -330,7 +359,7 @@ Reply with only this JSON object:
  "summary": "2-4 plain sentences",
  "signals": [{"method": "RSI(14)", "reading": "what it shows now", "direction": "bullish|bearish|neutral", "weight": "low|medium|high"}],
  "bull_case": "1-2 sentences", "bear_case": "1-2 sentences",
- "key_levels": "prices that would confirm or invalidate the call", "risks": ["short items"]}`;
+ "key_levels": "prices that would confirm or invalidate the call", "risks": ["short items"]}${intraday ? STEPS_SPEC : ""}`;
   }
 
   // ---------- Alpha Vantage via connector ----------
@@ -379,6 +408,8 @@ Reply with only this JSON object:
     const d = li.querySelector(".dot"); d.textContent = state === "done" ? "✓" : state === "fail" ? "!" : state === "skip" ? "–" : String([...steps.children].indexOf(li) + 1);
   }
   function horizon() { return document.querySelector('input[name="hz"]:checked').value; }
+  function isIntraday() { return !!document.querySelector('input[name="hz"]:checked').dataset.intraday; }
+  document.querySelectorAll('input[name="hz"]').forEach((el) => el.addEventListener("change", () => { $("#hz-note").hidden = !isIntraday(); }));
 
   $("#file").addEventListener("change", (e) => {
     file = e.target.files && e.target.files[0] || null;
@@ -414,7 +445,7 @@ Reply with only this JSON object:
     ctl = new AbortController(); const signal = ctl.signal;
     go.disabled = true; stopBtn.hidden = false; steps.hidden = false; say("");
     ["read", "tech", "market", "verdict"].forEach((s) => step(s, "wait"));
-    const hz = horizon();
+    const hz = horizon(), intraday = isIntraday();
     try {
       // 1. Read the chart
       step("read", "run", "Claude is looking at your screenshot. This usually takes 20–60 seconds.");
@@ -427,12 +458,11 @@ Reply with only this JSON object:
       step("tech", "done", `${techChart.signals.length} indicators · leans ${techChart.lean}`);
 
       // 3. Real data + news
-      let techMarket = null, news = [], marketNote = "", newsNote = "", lastClose = null;
+      let techMarket = null, news = [], marketNote = "", newsNote = "", intradayNote = "", lastClose = null;
       if (!reading.ticker) { step("market", "skip", "No ticker visible on the chart, so real data was skipped."); marketNote = "No ticker visible."; }
       else if (!mcp) { step("market", "skip", "Alpha Vantage isn't available in this view."); marketNote = "Connector unavailable."; }
       else {
-        step("market", "run", `Daily prices for ${reading.ticker}…`);
-        try {
+        const daily = async () => {
           const p = await avCall(mcp, "TIME_SERIES_DAILY", { symbol: reading.ticker, outputsize: "compact", datatype: "json" }, signal);
           const series = p && p["Time Series (Daily)"];
           if (!series) throw { code: "av_error", message: `No daily data found for ${reading.ticker}.` };
@@ -440,7 +470,32 @@ Reply with only this JSON object:
           const closes = days.map((d) => num(series[d]["4. close"])).filter((x) => x != null);
           lastClose = { date: days[days.length - 1], close: closes[closes.length - 1] };
           techMarket = analyze(closes, `Alpha Vantage daily closes (${days[0]} → ${lastClose.date})`);
-        } catch (e) { if (signal.aborted) throw { code: "cancelled" }; marketNote = avErrorCopy(e); }
+          techMarket.unit = "daily closes";
+        };
+        if (intraday) {
+          step("market", "run", `15-minute bars for ${reading.ticker}…`);
+          try {
+            const p = await avCall(mcp, "TIME_SERIES_INTRADAY", { symbol: reading.ticker, interval: "15min", outputsize: "compact", datatype: "json" }, signal);
+            const key = p && Object.keys(p).find((k) => k.startsWith("Time Series"));
+            const series = key && p[key];
+            if (!series || typeof series !== "object") throw { code: "av_error", message: `No 15-minute data found for ${reading.ticker}.` };
+            const times = Object.keys(series).sort();
+            const closes = times.map((t) => num(series[t] && series[t]["4. close"])).filter((x) => x != null);
+            if (closes.length < 3) throw { code: "av_error", message: `No 15-minute data found for ${reading.ticker}.` };
+            lastClose = { date: times[times.length - 1] + " (US/Eastern)", close: closes[closes.length - 1] };
+            techMarket = analyze(closes, `Alpha Vantage 15-minute bars (${times[0]} → ${times[times.length - 1]} US/Eastern)`);
+            techMarket.unit = "15-minute bars";
+          } catch (e) {
+            if (signal.aborted) throw { code: "cancelled" };
+            intradayNote = avErrorCopy(e);
+            step("market", "run", `15-minute bars unavailable (${intradayNote}). Trying daily prices…`);
+            await sleep(1300);
+            try { await daily(); } catch (e2) { if (signal.aborted) throw { code: "cancelled" }; marketNote = avErrorCopy(e2); }
+          }
+        } else {
+          step("market", "run", `Daily prices for ${reading.ticker}…`);
+          try { await daily(); } catch (e) { if (signal.aborted) throw { code: "cancelled" }; marketNote = avErrorCopy(e); }
+        }
         step("market", "run", `News for ${reading.ticker}…`);
         await sleep(1300); // free Alpha Vantage keys allow one request per second
         try {
@@ -449,21 +504,22 @@ Reply with only this JSON object:
           if (!news.length) newsNote = "No recent articles found.";
         } catch (e) { if (signal.aborted) throw { code: "cancelled" }; newsNote = avErrorCopy(e); }
         step("market", techMarket || news.length ? "done" : "skip",
-          [techMarket ? `${techMarket.n} real daily closes · leans ${techMarket.lean}` : `Prices: ${marketNote}`, news.length ? `${news.length} headlines` : `News: ${newsNote}`].join(" · "));
+          [techMarket ? `${techMarket.n} real ${techMarket.unit} · leans ${techMarket.lean}` : `Prices: ${marketNote || intradayNote}`, news.length ? `${news.length} headlines` : `News: ${newsNote}`].join(" · "));
       }
 
       // 4. Verdict
       step("verdict", "run", "Claude is weighing everything. Usually under a minute.");
       const payload = {
-        horizon: hz, today: new Date().toISOString().slice(0, 10),
+        horizon: hz, now_on_viewers_device: new Date().toString(),
         chart_reading: { ...reading, price_points: reading.price_points.map((p) => p.close) },
         technicals_from_screenshot: techChart,
-        technicals_from_real_daily_data: techMarket, latest_real_close: lastClose,
+        technicals_from_real_data: techMarket, latest_real_close: lastClose,
+        intraday_bars: intraday ? (techMarket && techMarket.unit === "15-minute bars" ? "included above" : `unavailable: ${intradayNote || marketNote}`) : undefined,
         news: news.length ? news.map(({ title, source, date, label, score }) => ({ title, source, date, label, score })) : `unavailable: ${newsNote || marketNote}`,
       };
-      const verdict = cleanVerdict(await sample.json(verdictPrompt(payload), { signal }), hz);
+      const verdict = cleanVerdict(await sample.json(verdictPrompt(payload, intraday), { signal }), hz);
       step("verdict", "done", "Done.");
-      render({ reading, techChart, techMarket, news, newsNote, marketNote, verdict, lastClose, example: false });
+      render({ reading, techChart, techMarket, news, newsNote, marketNote: marketNote || intradayNote, verdict, lastClose, intraday, example: false });
       $("#result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     } catch (e) {
       const cur = steps.querySelector('[data-s="run"]'); if (cur) step(cur.dataset.step, "fail", "");
@@ -511,11 +567,50 @@ Reply with only this JSON object:
     return h("div", { class: "chart-wrap" }, svg);
   }
 
+  function stepsPanel(v, base) {
+    const st = v.steps;
+    const cells = h("div", { class: "stepgrid" }, st.map((x) => h("div", { class: `stepcell ${x.direction}` },
+      h("span", { class: "t", text: `+${x.minutes} min` }),
+      h("span", { class: "d", text: { up: "▲ Up", down: "▼ Down", sideways: "► Flat" }[x.direction] }),
+      h("span", { class: "num", text: `${Math.round(x.p * 100)}% up` }),
+      x.low != null && x.high != null ? h("span", { class: "rng", text: `${fmt(x.low)}–${fmt(x.high)}` }) : null)));
+    // mini range chart: now + 4 steps, one price scale
+    const ranged = st.filter((x) => x.low != null && x.high != null);
+    let chart = null;
+    if (base != null && ranged.length) {
+      const W = 460, H = 150, L = 8, R = 58, Tp = 12, B = 24;
+      let lo = Math.min(base, ...ranged.map((x) => x.low)), hi = Math.max(base, ...ranged.map((x) => x.high));
+      const pad = (hi - lo || base * 0.002 || 1) * 0.12; lo -= pad; hi += pad;
+      const x = (i) => L + 18 + (i / 4) * (W - L - R - 36);
+      const y = (val) => Tp + (1 - (val - lo) / (hi - lo)) * (H - Tp - B);
+      const svg = h("svg:svg", { class: "recon", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Forecast price ranges for the next hour" });
+      for (let k = 0; k <= 2; k++) { const val = lo + ((hi - lo) * k) / 2; svg.append(h("svg:line", { x1: L, x2: W - R, y1: y(val), y2: y(val), stroke: "var(--line)", "stroke-width": 1 }), h("svg:text", { x: W - R + 6, y: y(val) + 4, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Mono, monospace", text: fmt(val) })); }
+      svg.append(h("svg:line", { x1: L, x2: W - R, y1: y(base), y2: y(base), stroke: "var(--ink)", "stroke-opacity": 0.45, "stroke-width": 1.2, "stroke-dasharray": "4 4" }));
+      let path = `M${x(0).toFixed(1)},${y(base).toFixed(1)}`;
+      st.forEach((s, i) => {
+        const col = s.direction === "up" ? "var(--up)" : s.direction === "down" ? "var(--down)" : "var(--flat)";
+        if (s.low == null || s.high == null) return;
+        const mid = (s.low + s.high) / 2, cx = x(i + 1);
+        svg.append(h("svg:rect", { x: cx - 9, y: y(s.high), width: 18, height: Math.max(2, y(s.low) - y(s.high)), rx: 4, fill: col, "fill-opacity": 0.22, stroke: col, "stroke-width": 1.2 }));
+        svg.append(h("svg:circle", { cx, cy: y(mid), r: 3.5, fill: col }));
+        path += ` L${cx.toFixed(1)},${y(mid).toFixed(1)}`;
+      });
+      svg.append(h("svg:path", { d: path, fill: "none", stroke: "var(--ink)", "stroke-opacity": 0.55, "stroke-width": 1.5 }));
+      svg.append(h("svg:circle", { cx: x(0), cy: y(base), r: 4.5, fill: "var(--ink)" }));
+      ["Now", "+15", "+30", "+45", "+60"].forEach((t, i) => svg.append(h("svg:text", { x: x(i), y: H - 6, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Sans, sans-serif", "text-anchor": "middle", text: t })));
+      chart = h("div", { class: "chart-wrap" }, svg);
+    }
+    return h("section", { class: "panel" }, h("h2", { text: "Next hour, in 15-minute steps" }),
+      h("p", { class: "muted", text: `From ${base != null ? fmt(base) : "the latest price"}. ${v.steps_basis || ""}`.trim() }),
+      cells, chart,
+      h("p", { class: "muted", style: "font-size:0.82rem", text: "15-minute moves are mostly noise, so these probabilities stay close to 50%. Use the ranges as a sense of how far price typically travels, not as targets." }));
+  }
+
   function techTable(a, b) {
     const methods = [...new Set([...a.signals.map((s) => s.method), ...(b ? b.signals.map((s) => s.method) : [])])];
     const cell = (rep, m) => { const s = rep && rep.signals.find((x) => x.method === m); return s ? h("td", {}, h("div", { class: "v", text: s.value }), h("span", { class: `tag ${s.direction}`, text: s.direction })) : h("td", { class: "muted", text: "—" }); };
     return h("div", { class: "tablewrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, h("th", { text: "Method" }), h("th", { text: "Screenshot" }), b ? h("th", { text: "Real daily data" }) : null)),
+      h("thead", {}, h("tr", {}, h("th", { text: "Method" }), h("th", { text: "Screenshot" }), b ? h("th", { text: b.unit === "15-minute bars" ? "Real 15-min bars" : "Real daily data" }) : null)),
       h("tbody", {}, methods.map((m) => h("tr", {}, h("td", { text: m }), cell(a, m), b ? cell(b, m) : null)),
         h("tr", {}, h("td", {}, h("b", { text: "Net lean" })),
           h("td", {}, h("span", { class: `tag ${a.lean}`, text: `${a.lean} (${a.score >= 0 ? "+" : ""}${a.score})` })),
@@ -541,6 +636,7 @@ Reply with only this JSON object:
       h("p", { text: v.summary }),
       v.levels ? h("p", {}, h("b", { text: "Key levels: " }), v.levels) : null);
     out.append(ticket);
+    if (v.steps.length) out.append(stepsPanel(v, d.techMarket && d.techMarket.unit === "15-minute bars" && d.lastClose ? d.lastClose.close : r.current_price));
 
     out.append(h("section", { class: "panel" }, h("h2", { text: "What Claude read off the chart" }), reconChart(r, d.lastClose),
       h("div", { class: "facts" },
