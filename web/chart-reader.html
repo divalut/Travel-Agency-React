@@ -1,4 +1,4 @@
-<title>Stock Chart Reader</title>
+<title>15-Minute Market Check</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -142,6 +142,29 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .fact { display: grid; gap: 2px; min-width: 0; }
 .fact b { font-weight: 600; overflow-wrap: anywhere; }
 footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
+/* Kalshi mode */
+.numin { font: inherit; font-family: var(--font-mono); width: 8rem; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.numin:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ticket[data-dir="skip"] { background: var(--sunk); }
+.ticket[data-dir="skip"] .call { color: var(--muted); }
+.edge { font-size: 1.02rem; }
+.edge b { font-family: var(--font-mono); }
+.dual { position: relative; height: 12px; border-radius: 999px; background: var(--line); }
+.dual .mk { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--surface); }
+.dual .mk.k { background: var(--muted); border-radius: 4px; transform: translate(-50%, -50%) rotate(45deg); width: 15px; height: 15px; }
+.dual .mk.m { background: var(--accent); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.82rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border-radius: 50%; background: var(--accent); }
+.legend i.k { border-radius: 2px; transform: rotate(45deg); background: var(--muted); }
+.checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.checks li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; }
+.ck { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 0.75rem; font-weight: 700; color: var(--surface); background: var(--muted); }
+.ck.pass { background: var(--up); } .ck.warn { background: var(--flat); } .ck.fail { background: var(--down); }
+.checks b { font-weight: 600; }
+.ctrls { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.ctrls label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.countdown { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; }
+.pending { color: var(--muted); font-style: italic; }
 /* 15-minute steps */
 .stepgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 380px) { .stepgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -155,25 +178,35 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
 
 <main>
   <header>
-    <span class="eyebrow">Chart → indicators → market data → verdict</span>
-    <h1>Stock Chart Reader</h1>
-    <p>Pick a screenshot of a price chart. Claude reads it, standard indicators run on the prices, real daily data and news are pulled from your Alpha Vantage connector when available, and you get a probability-weighted call.</p>
+    <span class="eyebrow">Screenshot → live price → odds math → review</span>
+    <h1>15-Minute Market Check</h1>
+    <p>Screenshot a Kalshi 15-minute crypto market (or any up/down price market). Claude reads the target, time left and prices, the page checks the live price and works out the real odds after fees, and you get one answer: bet Up, bet Down, or skip.</p>
   </header>
 
   <section class="panel" aria-labelledby="up-h">
-    <h2 id="up-h">Your chart</h2>
+    <div class="seg" role="radiogroup" aria-label="What are you checking?">
+      <input type="radio" name="mode" id="mode-k" value="kalshi" checked><label for="mode-k">Kalshi 15-min</label>
+      <input type="radio" name="mode" id="mode-s" value="stock"><label for="mode-s">Stock chart</label>
+    </div>
+    <h2 id="up-h">Your screenshot</h2>
     <label class="drop" for="file">
       <span class="thumb" id="thumb" aria-hidden="true">
         <svg width="34" height="26" viewBox="0 0 34 26" fill="none"><path d="M2 22 L10 14 L16 18 L24 7 L32 11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 25 H32" stroke="currentColor" stroke-width="1.4"/></svg>
       </span>
       <span>
-        <strong id="file-name">Choose a chart screenshot</strong>
-        <span class="muted" id="file-hint">From Photos or Files. Best with the ticker and price axis visible.</span>
+        <strong id="file-name">Choose a screenshot</strong>
+        <span class="muted" id="file-hint">From Photos. Include the target price, the countdown, the Up/Down prices and your phone's clock.</span>
       </span>
       <input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif">
     </label>
 
-    <div class="section">
+    <div class="section" id="kalshi-opts">
+      <label class="eyebrow" for="contracts">Contracts you'd buy</label>
+      <input type="number" id="contracts" class="numin" min="1" max="10000" step="1" value="10" inputmode="numeric">
+      <p class="muted" style="font-size:0.85rem">Used to estimate Kalshi's trading fee, which is rounded up per order and costs more per contract on small orders.</p>
+    </div>
+
+    <div class="section" id="stock-opts" hidden>
       <span class="eyebrow" id="hz-l">Forecast window</span>
       <div class="seg" role="radiogroup" aria-labelledby="hz-l">
         <input type="radio" name="hz" id="hz0a" value="15 minutes" data-intraday="1"><label for="hz0a">15 min</label>
@@ -186,7 +219,7 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
     </div>
 
     <div class="actions">
-      <button class="primary" id="go" disabled>Analyze chart</button>
+      <button class="primary" id="go" disabled>Check this market</button>
       <button class="ghost" id="stop" hidden>Stop</button>
     </div>
     <p class="notice" id="status" hidden></p>
@@ -201,7 +234,7 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
 
   <div id="result" class="section" aria-live="polite"></div>
 
-  <footer>Not financial advice. Prices read off a screenshot are approximate, and short-term price moves are close to a coin flip. Each analysis uses your own Claude usage (two requests) and a couple of Alpha Vantage calls.</footer>
+  <footer>Not financial advice. 15-minute crypto moves are close to random and Kalshi's prices are usually fair, so most checks should end in "skip": that's the page working, not failing. Each check uses your own Claude usage (two requests) and one Alpha Vantage call (free keys allow 25 a day). Only bet what you can afford to lose.</footer>
 </main>
 
 <script>
@@ -220,6 +253,7 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
     return el;
   }
+  const axisFmt = (n) => (Math.abs(n) >= 1000 ? Math.round(n).toLocaleString() : fmt(n));
   const fmt = (n, d = 2) => (typeof n === "number" && isFinite(n) ? n.toFixed(d) : "—");
   const sgn = (n, d = 1) => (typeof n === "number" && isFinite(n) ? (n >= 0 ? "+" : "") + n.toFixed(d) : "—");
   const num = (v) => { const n = typeof v === "string" ? parseFloat(v.replace(/[,$]/g, "")) : v; return typeof n === "number" && isFinite(n) ? n : null; };
@@ -402,6 +436,12 @@ Reply with only this JSON object:
   const go = $("#go"), stopBtn = $("#stop"), status = $("#status"), steps = $("#steps");
 
   function say(msg, bad) { status.hidden = !msg; status.textContent = msg || ""; status.classList.toggle("bad", !!bad); }
+  const STOCK_STEPS = [["read", "Read the screenshot"], ["tech", "Run indicators on the chart's prices"], ["market", "Fetch real prices and news"], ["verdict", "Weigh the evidence"]];
+  const K_STEPS = [["read", "Read the market screenshot"], ["price", "Get the live price"], ["math", "Work out the odds after fees"], ["review", "Full check by Claude"]];
+  function setSteps(list) {
+    steps.replaceChildren(...list.map(([key, label], i) => h("li", { "data-step": key, "data-s": "wait" }, h("span", { class: "dot", text: String(i + 1) }), h("span", {}, label, h("small")))));
+  }
+  function mode() { return document.querySelector('input[name="mode"]:checked').value; }
   function step(name, state, note) {
     const li = steps.querySelector(`[data-step="${name}"]`); li.dataset.s = state;
     li.querySelector("small").textContent = note || "";
@@ -440,11 +480,11 @@ Reply with only this JSON object:
     }
   }
 
-  go.addEventListener("click", async () => {
+  async function runStock() {
     if (!file || !sample) return;
     ctl = new AbortController(); const signal = ctl.signal;
     go.disabled = true; stopBtn.hidden = false; steps.hidden = false; say("");
-    ["read", "tech", "market", "verdict"].forEach((s) => step(s, "wait"));
+    setSteps(STOCK_STEPS);
     const hz = horizon(), intraday = isIntraday();
     try {
       // 1. Read the chart
@@ -519,7 +559,7 @@ Reply with only this JSON object:
       };
       const verdict = cleanVerdict(await sample.json(verdictPrompt(payload, intraday), { signal }), hz);
       step("verdict", "done", "Done.");
-      render({ reading, techChart, techMarket, news, newsNote, marketNote: marketNote || intradayNote, verdict, lastClose, intraday, example: false });
+      render({ reading, techChart, techMarket, news, newsNote, marketNote: marketNote || intradayNote, verdict, lastClose, intraday, example: false }); hasResult = true;
       $("#result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     } catch (e) {
       const cur = steps.querySelector('[data-s="run"]'); if (cur) step(cur.dataset.step, "fail", "");
@@ -528,7 +568,8 @@ Reply with only this JSON object:
     } finally {
       go.disabled = !file || !sample; stopBtn.hidden = true; ctl = null;
     }
-  });
+  }
+  go.addEventListener("click", () => (mode() === "kalshi" ? runKalshi() : runStock()));
 
   // ---------- rendering ----------
   function reconChart(reading, lastClose) {
@@ -537,7 +578,7 @@ Reply with only this JSON object:
     const closes = pts.map((p) => p.close);
     let lo = Math.min(...closes), hi = Math.max(...closes);
     const span0 = hi - lo || hi * 0.05 || 1;
-    const levels = [...reading.support.map((v) => ["S", v]), ...reading.resistance.map((v) => ["R", v])].filter(([, v]) => v >= lo - span0 * 0.6 && v <= hi + span0 * 0.6);
+    const levels = [...reading.support.map((v) => ["S", v]), ...reading.resistance.map((v) => ["R", v]), ...(reading.target != null ? [["T", reading.target]] : [])].filter(([, v]) => v >= lo - span0 * 0.6 && v <= hi + span0 * 0.6);
     levels.forEach(([, v]) => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
     const pad = (hi - lo || 1) * 0.08; lo -= pad; hi += pad;
     const x = (i) => L + (i / (pts.length - 1)) * (W - L - R);
@@ -551,13 +592,13 @@ Reply with only this JSON object:
     for (let k = 0; k <= 3; k++) {
       const v = lo + ((hi - lo) * k) / 3, yy = y(v);
       svg.append(h("svg:line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "var(--line)", "stroke-width": 1 }));
-      svg.append(h("svg:text", { x: W - R + 6, y: yy + 4, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Mono, monospace", text: fmt(v) }));
+      svg.append(h("svg:text", { x: W - R + 6, y: yy + 4, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Mono, monospace", text: axisFmt(v) }));
     }
     svg.append(h("svg:path", { d: area, fill: col, "fill-opacity": 0.1, stroke: "none" }));
     for (const [kind, v] of levels) {
-      const yy = y(v), c = kind === "S" ? "var(--up)" : "var(--down)";
+      const yy = y(v), c = kind === "S" ? "var(--up)" : kind === "T" ? "var(--accent)" : "var(--down)";
       svg.append(h("svg:line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: c, "stroke-width": 1.2, "stroke-dasharray": "5 4" }));
-      svg.append(h("svg:text", { x: L + 4, y: yy - 4, fill: c, "font-size": 11.5, "font-family": "IBM Plex Mono, monospace", text: `${kind === "S" ? "Support" : "Resistance"} ${fmt(v)}` }));
+      svg.append(h("svg:text", { x: L + 4, y: yy - 4, fill: c, "font-size": 11.5, "font-family": "IBM Plex Mono, monospace", text: `${kind === "S" ? "Support" : kind === "T" ? "Target" : "Resistance"} ${axisFmt(v)}` }));
     }
     svg.append(h("svg:path", { d: line, fill: "none", stroke: col, "stroke-width": 2.2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
     const lx = x(pts.length - 1), ly = y(closes[closes.length - 1]);
@@ -621,7 +662,7 @@ Reply with only this JSON object:
     const { reading: r, verdict: v } = d;
     const name = r.ticker || r.company || "Unknown asset";
     const arrow = { up: "▲ Up", down: "▼ Down", sideways: "► Sideways" }[v.direction];
-    const out = $("#result"); out.replaceChildren();
+    const out = $("#result"); out.replaceChildren(); clearInterval(countdownTimer); kState = null;
 
     const ticket = h("section", { class: "ticket", "data-dir": v.direction, "aria-label": "Verdict" },
       d.example ? h("span", { class: "badge-example", text: "Example result · upload your own chart to replace it" }) : null,
@@ -669,7 +710,7 @@ Reply with only this JSON object:
   }
 
   // ---------- example result shown at rest (fictional data) ----------
-  (function example() {
+  function stockExample() {
     const closes = [41.2,41.8,41.1,42.4,43.0,42.6,43.9,44.5,44.1,45.2,46.0,45.4,44.8,45.9,47.1,46.6,47.8,48.4,47.9,47.2,48.6,49.3,48.8,49.9,50.6,49.8,50.9,51.4,50.7,51.8,52.3,51.6,52.1,52.6,51.9,52.4,52.7,52.2,52.5,52.8];
     const reading = cleanReading({ ticker: "EXMPL", company_or_asset: "Example Corp (fictional)", timeframe: "4M daily", chart_type: "candlestick", current_price: 52.8,
       price_points: closes.map((c, i) => ({ label: i === 0 ? "Jul 28" : i === closes.length - 1 ? "Nov 20" : "", close: c })),
@@ -685,7 +726,379 @@ Reply with only this JSON object:
           { method: "Volume", reading: "Declining into resistance", direction: "bearish", weight: "low" }],
         bull_case: "A daily close above 53 on rising volume confirms the triangle and targets roughly 56.", bear_case: "Another rejection at 53 with weak volume could send it back to 49.8 support.",
         key_levels: "Above 53.0 confirms; a close under 49.8 invalidates.", risks: ["Breakouts on falling volume often fail", "Screenshot prices are approximate"] }, "1–4 weeks") });
-  })();
+  }
+
+  // =====================================================================
+  // Kalshi / prediction-market mode
+  // =====================================================================
+  const MIN_PER_YEAR = 525600;
+  const TYPICAL_VOL = { BTC: 0.45, ETH: 0.6, SOL: 0.75, XRP: 0.7, DOGE: 0.85 }; // annualized, rough typical levels
+  const EDGE_MIN = 0.03;   // need at least 3¢ expected profit per contract after fees
+  const MIN_SECONDS = 60;  // too close to the close to act on
+  let countdownTimer = null, kState = null, hasResult = false;
+
+  // Standard normal CDF (Abramowitz & Stegun 7.1.26 via erf)
+  function phi(x) {
+    const t = 1 / (1 + 0.3275911 * Math.abs(x) / Math.SQRT2);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-(x * x) / 2);
+    return x >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+  function pAbove(S, K, minutes, vol) {
+    if (!(S > 0 && K > 0)) return null;
+    if (minutes <= 0) return S > K ? 1 : S < K ? 0 : 0.5;
+    const sd = vol * Math.sqrt(minutes / MIN_PER_YEAR);
+    return phi(Math.log(S / K) / sd);
+  }
+  // Volatility at which the model matches Kalshi's price (null when undefined)
+  function impliedVol(pUp, S, K, minutes) {
+    if (!(pUp > 0.02 && pUp < 0.98) || !(S > 0 && K > 0) || minutes <= 0 || S === K) return null;
+    let lo = -8, hi = 8; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (phi(m) < pUp) lo = m; else hi = m; }
+    const d = (lo + hi) / 2; const x = Math.log(S / K);
+    if (Math.abs(d) < 1e-3 || Math.sign(d) !== Math.sign(x)) return null;
+    return (x / d) / Math.sqrt(minutes / MIN_PER_YEAR);
+  }
+  // Kalshi's published taker fee: round up(0.07 × contracts × price × (1 − price)), in dollars
+  function kalshiFee(price, n) { return Math.ceil(0.07 * n * price * (1 - price) * 100 - 1e-9) / 100; }
+  function evPerContract(q, price, n) { return q - price - kalshiFee(price, n) / n; }
+  function maxEntry(q, n) { let best = null; for (let c = 1; c <= 99; c++) if (evPerContract(q, c / 100, n) >= EDGE_MIN) best = c; return best; }
+
+  function parseDuration(txt) {
+    if (txt == null) return null; const t = String(txt).trim().toLowerCase();
+    let m = t.match(/^(\d{1,2}):(\d{2}):(\d{2})$/); if (m) return +m[1] * 3600 + +m[2] * 60 + +m[3];
+    m = t.match(/^(\d{1,3}):(\d{2})$/); if (m) return +m[1] * 60 + +m[2];
+    let secs = 0, hit = false;
+    for (const [re, mult] of [[/(\d+(?:\.\d+)?)\s*h/, 3600], [/(\d+(?:\.\d+)?)\s*m(?!s)/, 60], [/(\d+(?:\.\d+)?)\s*s/, 1]]) { const x = t.match(re); if (x) { secs += parseFloat(x[1]) * mult; hit = true; } }
+    return hit ? Math.round(secs) : null;
+  }
+  // Seconds since the phone's status-bar clock in the screenshot (same phone, same time zone)
+  function ageFromStatusBar(txt) {
+    if (!txt) return null; const m = String(txt).trim().toLowerCase().match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/); if (!m) return null;
+    let h = +m[1]; const mi = +m[2]; if (h > 23 || mi > 59) return null;
+    const hours = m[3] ? [(h % 12) + (m[3] === "pm" ? 12 : 0)] : h > 12 ? [h] : [h % 12, (h % 12) + 12];
+    const now = new Date(); let best = null;
+    for (const H of hours) {
+      const d = new Date(now); d.setHours(H, mi, 0, 0); if (d - now > 120000) d.setDate(d.getDate() - 1);
+      const age = (now - d) / 1000; if (age >= -120 && (best == null || age < best)) best = Math.max(0, age);
+    }
+    return best != null && best < 6 * 3600 ? best : null;
+  }
+
+  const K_READ_PROMPT = `The attached image is a screenshot of a short-term prediction market, usually a Kalshi 15-minute crypto market (for example "Bitcoin up or down in 15 minutes"), on a phone.
+Read only what is visible. Normalize so that "up" always means the contract that pays if the price finishes ABOVE the target (for "Yes, above $X" markets that is Yes; for up/down markets it is Up). If a contract pays when the price finishes BELOW the target, put its price in down_price_cents.
+Prices are in cents (1-99). Use the BUY price for each side if both buy and sell are shown.
+Reply with only this JSON object:
+{"is_prediction_market": true, "platform": "Kalshi|Polymarket|other", "asset": "BTC|ETH|SOL|XRP|DOGE|other ticker",
+ "market_title": "exact title", "question_type": "up_down|above_below|range|other",
+ "target_price": 61000.0, "target_label": "e.g. Price to beat / Strike",
+ "current_price_shown": 61040.0, "time_left": "mm:ss countdown exactly as shown, or null", "close_time": "e.g. 3:15 PM ET or null",
+ "status_bar_time": "the phone's clock at the top of the screen, e.g. 9:41, or null",
+ "up_price_cents": 53, "down_price_cents": 48, "up_chance_percent": 52,
+ "volume": "text or null", "recent_prices": [61010, 61025], "chart_span_minutes": 15,
+ "rules_text": "settlement rules if visible, else null", "notes": "anything unclear or cut off"}
+recent_prices: 10-40 evenly spaced prices read off any price chart in the screenshot, oldest first; [] if there is no chart.
+If this is not a prediction market screenshot, set is_prediction_market to false.`;
+
+  function cleanK(r) {
+    r = r && typeof r === "object" ? r : {};
+    const cents = (v) => { const n = num(v); return n == null ? null : n > 0 && n < 1 ? Math.round(n * 100) : n >= 1 && n <= 99 ? n : null; };
+    const asset = String(r.asset || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || null;
+    return {
+      ok: r.is_prediction_market !== false, platform: String(r.platform || "Kalshi"), asset,
+      title: String(r.market_title || ""), qtype: pick(r.question_type, ["up_down", "above_below", "range", "other"], "other"),
+      target: num(r.target_price), targetLabel: String(r.target_label || "Target"), shown: num(r.current_price_shown),
+      timeLeftText: r.time_left == null ? null : String(r.time_left), closeTime: r.close_time == null ? null : String(r.close_time),
+      clock: r.status_bar_time == null ? null : String(r.status_bar_time),
+      up: cents(r.up_price_cents), down: cents(r.down_price_cents), chance: num(r.up_chance_percent),
+      volume: r.volume == null ? null : String(r.volume), recent: Array.isArray(r.recent_prices) ? r.recent_prices.map(num).filter((x) => x != null).slice(0, 60) : [],
+      span: num(r.chart_span_minutes), rules: r.rules_text == null ? null : String(r.rules_text), notes: String(r.notes || ""),
+    };
+  }
+
+  // All deterministic math, recomputed whenever price, time or contracts change
+  function computeK(st) {
+    const r = st.read, n = Math.max(1, Math.round(st.contracts || 1));
+    const S = st.spot ? st.spot.price : r.shown, K = r.target;
+    const secsLeft = st.secsLeft, minutes = secsLeft != null ? secsLeft / 60 : null;
+    const vol = TYPICAL_VOL[r.asset] ?? 0.65;
+    const out = { n, S, K, minutes, vol, hardSkip: [], sides: [], call: "skip" };
+    if (!(r.qtype === "up_down" || r.qtype === "above_below")) out.hardSkip.push("This market type isn't a single above/below target, so the odds math doesn't apply.");
+    if (K == null) out.hardSkip.push("Couldn't read the target price.");
+    if (S == null) out.hardSkip.push("No current price (live price failed and none was readable).");
+    if (r.up == null && r.down == null) out.hardSkip.push("Couldn't read Kalshi's Up/Down prices.");
+    if (minutes == null) out.hardSkip.push("Couldn't tell how much time is left. Enter it below.");
+    else if (secsLeft <= 0) out.hardSkip.push("This market has already closed.");
+    else if (secsLeft < MIN_SECONDS) out.hardSkip.push("Under a minute left: too little time to place an order at these prices.");
+    if (S != null && K != null && minutes != null && minutes > 0) {
+      const scen = [["Calm market", vol * 0.6], ["Typical", vol], ["Wild market", vol * 1.6]].map(([label, v]) => ({ label, vol: v, pUp: pAbove(S, K, minutes, v) }));
+      out.scen = scen; out.pUp = scen[1].pUp;
+      out.sd = S * vol * Math.sqrt(minutes / MIN_PER_YEAR);      // typical 1-sigma move in dollars over the time left
+      out.zDist = out.sd ? (S - K) / out.sd : null;
+      const mktUp = r.up != null && r.down != null ? (r.up + (100 - r.down)) / 200 : r.up != null ? r.up / 100 : r.chance != null ? r.chance / 100 : 1 - r.down / 100;
+      out.mktUp = mktUp;
+      const iv = impliedVol(mktUp, S, K, minutes); out.iv = iv; out.ivMove = iv ? S * iv * Math.sqrt(minutes / MIN_PER_YEAR) : null;
+      for (const [side, price, qs] of [["up", r.up, scen.map((x) => x.pUp)], ["down", r.down, scen.map((x) => 1 - x.pUp)]]) {
+        if (price == null) continue;
+        const c = price / 100, evs = qs.map((q) => evPerContract(q, c, n));
+        out.sides.push({ side, price, q: qs[1], evs, ev: evs[1], fee: kalshiFee(c, n), maxC: maxEntry(qs[1], n), robust: evs[1] >= EDGE_MIN && Math.min(...evs) > 0 });
+      }
+      if (r.up != null && r.down != null) out.spread = r.up + r.down - 100;
+      const best = out.sides.filter((x) => x.robust).sort((a, b) => b.ev - a.ev)[0];
+      if (best && !out.hardSkip.length) { out.call = best.side === "up" ? "bet_up" : "bet_down"; out.best = best; }
+    }
+    return out;
+  }
+
+  function kReviewPrompt(st, m) {
+    const r = st.read;
+    const data = {
+      market: { platform: r.platform, title: r.title, asset: r.asset, type: r.qtype, target: r.target, rules_visible: r.rules, volume: r.volume },
+      kalshi_prices_cents: { up_buy: r.up, down_buy: r.down, up_chance_shown: r.chance, spread_cents: m.spread },
+      price: { live: st.spot, shown_in_screenshot: r.shown, used: m.S },
+      time: { minutes_left_now: m.minutes != null ? +m.minutes.toFixed(2) : null, countdown_in_screenshot: r.timeLeftText, screenshot_age_seconds: st.ageSecs, age_source: st.ageSource },
+      recent_prices_from_chart: r.recent, chart_span_minutes: r.span,
+      odds_math: {
+        model: "driftless lognormal: P(up) = Phi(ln(price/target) / (vol*sqrt(minutes/525600)))",
+        typical_annual_vol_assumed: m.vol, typical_move_1sd_dollars: m.sd && +m.sd.toFixed(2), distance_in_sd: m.zDist && +m.zDist.toFixed(2),
+        p_up_by_scenario: m.scen && m.scen.map((x) => ({ scenario: x.label, vol: +x.vol.toFixed(2), p_up: +x.pUp.toFixed(3) })),
+        kalshi_implied_p_up: m.mktUp && +m.mktUp.toFixed(3), kalshi_implied_annual_vol: m.iv && +m.iv.toFixed(2), kalshi_implied_move_dollars: m.ivMove && +m.ivMove.toFixed(2),
+        sides: m.sides.map((x) => ({ side: x.side, price_cents: x.price, model_win_prob: +x.q.toFixed(3), fee_total_dollars: x.fee, contracts: m.n,
+          ev_per_contract_cents_by_scenario: x.evs.map((e) => +(e * 100).toFixed(1)), passes_edge_rule: x.robust, max_entry_cents: x.maxC })),
+        edge_rule: `bet only if expected profit >= ${EDGE_MIN * 100} cents per contract after fees in the typical scenario AND positive in calm and wild scenarios`,
+        math_call: m.call, hard_skip_reasons: m.hardSkip,
+      },
+      reading_notes: r.notes,
+    };
+    return `You are reviewing a possible bet on a short-term prediction market (usually a Kalshi 15-minute crypto up/down market). Your job is to protect the user from bad bets. Check everything below and decide: bet_up, bet_down or skip.
+
+Ground rules:
+- Short-horizon crypto moves are close to random and these markets are usually priced fairly. Skip is the right answer most of the time.
+- You may only choose bet_up or bet_down if that side passes the edge rule in the math. You may always downgrade to skip.
+- Look for reasons the math could be wrong: misread prices or target, stale screenshot, live price disagreeing with the screenshot (Kalshi settles on its own index, which can differ slightly from exchange prices), wide spread, thin volume, very little time left, unclear settlement rules, momentum in recent prices (weak evidence at this horizon), or the price sitting right on the target.
+- Be concrete and brief. Talk to the user directly.
+
+DATA:
+${JSON.stringify(data)}
+
+Reply with only this JSON object:
+{"call": "bet_up|bet_down|skip", "confidence": "low|medium|high", "headline": "one short sentence",
+ "reasons": ["2-4 short reasons for the call"],
+ "checks": [{"name": "Prices read correctly", "status": "pass|warn|fail", "detail": "short"}, {"name": "Time left", ...}, {"name": "Live price vs screenshot", ...}, {"name": "Edge after fees", ...}, {"name": "Spread and liquidity", ...}, {"name": "Momentum", ...}, {"name": "Settlement rules", ...}],
+ "what_would_change_it": "one sentence"}`;
+  }
+
+  async function fetchSpot(asset, signal) {
+    if (!mcp) throw { code: "capability_disabled" };
+    const p = await avCall(mcp, "CURRENCY_EXCHANGE_RATE", { from_currency: asset, to_currency: "USD", datatype: "json" }, signal);
+    const q = p && p["Realtime Currency Exchange Rate"];
+    const price = q && num(q["5. Exchange Rate"]);
+    if (!price) throw { code: "av_error", message: `No live price found for ${asset}.` };
+    const ts = q["6. Last Refreshed"] ? Date.parse(String(q["6. Last Refreshed"]).replace(" ", "T") + "Z") : NaN;
+    return { price, bid: num(q["8. Bid Price"]), ask: num(q["9. Ask Price"]), at: isFinite(ts) ? ts : Date.now(), fetchedAt: Date.now() };
+  }
+
+  async function runKalshi() {
+    if (!file || !sample) return;
+    ctl = new AbortController(); const signal = ctl.signal;
+    go.disabled = true; stopBtn.hidden = false; steps.hidden = false; say("");
+    setSteps(K_STEPS);
+    try {
+      step("read", "run", "Claude is reading the market. Usually 15–45 seconds.");
+      const read = cleanK(await sample.json(K_READ_PROMPT, { images: file, signal }));
+      if (!read.ok) { step("read", "fail", "Not a prediction market screenshot."); say("That doesn't look like a prediction market screenshot. Include the target price, countdown and Up/Down prices.", true); return; }
+      step("read", "done", [read.asset, read.target != null ? `target ${fmt(read.target)}` : "no target read", read.timeLeftText ? `${read.timeLeftText} left` : "no countdown read", read.up != null ? `Up ${read.up}¢` : null, read.down != null ? `Down ${read.down}¢` : null].filter(Boolean).join(" · "));
+
+      // timing
+      let ageSecs = ageFromStatusBar(read.clock), ageSource = ageSecs != null ? "phone clock in screenshot" : null;
+      if (ageSecs == null && file.lastModified) { const a = (Date.now() - file.lastModified) / 1000; if (a >= 0 && a < 3 * 3600) { ageSecs = a; ageSource = "file time"; } }
+      if (ageSecs == null) { ageSecs = 0; ageSource = "unknown (assumed just taken)"; }
+      const shotLeft = parseDuration(read.timeLeftText);
+      const secsLeft = shotLeft != null ? shotLeft - ageSecs : null;
+
+      // live price
+      let spot = null, spotNote = "";
+      if (read.asset && mcp) {
+        step("price", "run", `Live ${read.asset} price…`);
+        try { spot = await fetchSpot(read.asset, signal); }
+        catch (e) { if (signal.aborted) throw { code: "cancelled" }; spotNote = avErrorCopy(e); }
+        step("price", spot ? "done" : "skip", spot ? `${read.asset} ${fmt(spot.price)} (as of ${new Date(spot.at).toLocaleTimeString()})` : `Live price unavailable: ${spotNote}. Using the screenshot's price.`);
+      } else step("price", "skip", read.asset ? "Alpha Vantage isn't available in this view. Using the screenshot's price." : "No asset read.");
+
+      kState = { read, spot, spotNote, ageSecs, ageSource, secsLeft, setAt: Date.now(), contracts: +$("#contracts").value || 10, review: null, reviewState: "running", example: false };
+      const m = computeK(kState);
+      step("math", "done", m.call === "skip" ? (m.hardSkip[0] || "No side has enough edge after fees.") : `${m.call === "bet_up" ? "Up" : "Down"} shows +${(m.best.ev * 100).toFixed(1)}¢ per contract`);
+      renderK(); hasResult = true;
+      $("#result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+
+      // full review
+      step("review", "run", "Claude is checking everything. Usually 20–60 seconds.");
+      try {
+        const rv = await sample.json(kReviewPrompt(kState, m), { signal });
+        kState.review = cleanReview(rv, m); kState.reviewState = "done";
+        step("review", "done", "Done.");
+      } catch (e) {
+        if (e && e.code === "cancelled") throw e;
+        kState.reviewState = "failed"; kState.reviewError = sampleErrorCopy(e); step("review", "fail", kState.reviewError);
+      }
+      renderK();
+    } catch (e) {
+      const cur = steps.querySelector('[data-s="run"]'); if (cur) step(cur.dataset.step, "fail", "");
+      if (kState && kState.reviewState === "running") { kState.reviewState = "failed"; kState.reviewError = sampleErrorCopy(e); renderK(); }
+      say(sampleErrorCopy(e), e && e.code !== "cancelled");
+      if (e && ["not_granted", "sampling_disabled", "not_declared", "capability_disabled", "images_unavailable"].includes(e.code)) sample = null;
+    } finally {
+      go.disabled = !file || !sample; stopBtn.hidden = true; ctl = null;
+    }
+  }
+
+  function cleanReview(rv, m) {
+    rv = rv && typeof rv === "object" ? rv : {};
+    let call = pick(rv.call, ["bet_up", "bet_down", "skip"], "skip"), overridden = false;
+    const side = call === "bet_up" ? "up" : call === "bet_down" ? "down" : null;
+    if (side) { const s = m.sides.find((x) => x.side === side); if (!s || !s.robust || m.hardSkip.length) { call = "skip"; overridden = true; } }
+    return {
+      call, overridden, confidence: pick(rv.confidence, ["low", "medium", "high"], "low"), headline: String(rv.headline || ""),
+      reasons: (Array.isArray(rv.reasons) ? rv.reasons : []).map(String).slice(0, 5),
+      checks: (Array.isArray(rv.checks) ? rv.checks : []).slice(0, 10).map((c) => ({ name: String(c?.name || "Check"), status: pick(c?.status, ["pass", "warn", "fail"], "warn"), detail: String(c?.detail || "") })),
+      change: String(rv.what_would_change_it || ""),
+    };
+  }
+
+  function secsLeftNow() { return kState && kState.secsLeft != null ? kState.secsLeft - (Date.now() - kState.setAt) / 1000 : null; }
+  function mmss(sec) { if (sec == null) return "—"; if (sec <= 0) return "Closed"; const s = Math.floor(sec); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+  const cents = (x) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1)}¢`);
+  const money = (x) => (x == null ? "—" : "$" + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+  function renderK() {
+    const st = kState; if (!st) return;
+    // freeze time-left at render so math and countdown agree
+    if (st.secsLeft != null) { st.secsLeft = secsLeftNow(); st.setAt = Date.now(); }
+    const m = computeK(st), r = st.read, rv = st.review;
+    const finalCall = st.reviewState === "done" ? rv.call : m.call;
+    const dir = finalCall === "bet_up" ? "up" : finalCall === "bet_down" ? "down" : "skip";
+    const out = $("#result"); out.replaceChildren();
+    clearInterval(countdownTimer);
+
+    // ---- the answer ----
+    const best = m.sides.find((x) => (dir === "up" && x.side === "up") || (dir === "down" && x.side === "down"));
+    const ticket = h("section", { class: "ticket", "data-dir": dir, "aria-label": "Recommendation" },
+      st.example ? h("span", { class: "badge-example", text: "Example · fictional numbers · upload your own screenshot" }) : null,
+      h("div", { class: "ticket-top" },
+        h("div", {}, h("div", { class: "sym", text: `${r.asset || "?"} ${r.qtype === "up_down" ? "up or down" : "above " + (r.target != null ? fmt(r.target) : "?")}` }),
+          h("div", { class: "muted", text: r.title || r.platform })),
+        h("div", { style: "text-align:right" }, h("div", { class: "eyebrow", text: "Time left" }), h("div", { class: "countdown", id: "cd", text: mmss(secsLeftNow()) }))),
+      h("div", { class: "call", text: dir === "up" ? "▲ Bet Up" : dir === "down" ? "▼ Bet Down" : "Skip" }),
+      st.reviewState === "running" ? h("p", { class: "pending", text: "Math result shown. Claude is still double-checking everything…" }) : null,
+      st.reviewState === "done" && rv.headline ? h("p", { class: "edge", text: rv.headline }) : null,
+      best ? h("p", { class: "edge" }, "Expected profit ", h("b", { text: cents(best.ev) }), ` per contract at ${best.price}¢ after est. fees. `,
+        best.maxC != null ? h("span", {}, "Don't pay more than ", h("b", { text: `${best.maxC}¢` }), ".") : null)
+        : m.hardSkip.length ? h("p", { class: "edge", text: m.hardSkip[0] })
+        : st.reviewState === "done" && rv.headline ? null : h("p", { class: "edge", text: "Neither side pays enough after fees to be worth it. Kalshi's prices look about right." }),
+      rv && rv.overridden ? h("p", { class: "muted", text: "Claude suggested a bet, but the math shows no real edge after fees, so this stays a skip." }) : null,
+      m.pUp != null && m.mktUp != null ? h("div", { class: "meter" },
+        h("div", { class: "ticket-top" }, h("span", {}, "Chance it finishes above target: ", h("b", { class: "num", text: `${Math.round(m.pUp * 100)}%` }), " (math)"), h("span", { class: "muted num", text: `Kalshi: ${Math.round(m.mktUp * 100)}%` })),
+        (() => { const bar = h("div", { class: "dual", role: "img", "aria-label": `Math ${Math.round(m.pUp * 100)} percent, Kalshi ${Math.round(m.mktUp * 100)} percent` }, h("span", { class: "mk k" }), h("span", { class: "mk m" }));
+          bar.children[0].style.left = `${m.mktUp * 100}%`; bar.children[1].style.left = `${m.pUp * 100}%`; return bar; })(),
+        h("div", { class: "legend" }, h("span", {}, h("i", { class: "k" }), "Kalshi's price"), h("span", {}, h("i"), "Math from live price and time left"))) : null);
+    out.append(ticket);
+
+    // ---- Claude's review ----
+    out.append(h("section", { class: "panel" }, h("h2", { text: "Full check" }),
+      st.reviewState === "running" ? h("p", { class: "pending", text: "Claude is reviewing the reading, prices, timing, spread and momentum…" })
+        : st.reviewState === "failed" ? h("p", { class: "muted", text: `Claude's review didn't finish (${st.reviewError || "unknown error"}). The math above still stands.` })
+        : [rv.reasons.length ? h("ul", { class: "plain" }, rv.reasons.map((x) => h("li", { text: x }))) : null,
+           h("ul", { class: "checks" }, rv.checks.map((c) => h("li", {}, h("span", { class: `ck ${c.status}`, "aria-label": c.status, text: c.status === "pass" ? "✓" : c.status === "fail" ? "✕" : "!" }),
+             h("div", { style: "min-width:0" }, h("b", { text: c.name }), c.detail ? h("div", { class: "muted", text: c.detail }) : null)))),
+           rv.change ? h("p", {}, h("b", { text: "What would change this: " }), rv.change) : null,
+           h("p", { class: "muted", text: `Claude's confidence: ${rv.confidence}` })]));
+
+    // ---- the numbers ----
+    if (m.sides.length) {
+      out.append(h("section", { class: "panel" }, h("h2", { text: "The numbers" }),
+        h("div", { class: "tablewrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Side", "Price", "Win %", "Profit", "If calm", "If wild"].map((t) => h("th", { text: t })))),
+          h("tbody", {}, m.sides.map((x) => h("tr", {},
+            h("td", {}, h("b", { text: x.side === "up" ? "Up" : "Down" })), h("td", { class: "v", text: `${x.price}¢` }), h("td", { class: "v", text: `${Math.round(x.q * 100)}%` }),
+            h("td", { class: "v" }, h("span", { class: `tag ${x.evs[1] >= EDGE_MIN ? "bullish" : x.evs[1] < 0 ? "bearish" : "neutral"}`, text: cents(x.evs[1]) })),
+            h("td", { class: "v", text: cents(x.evs[0]) }), h("td", { class: "v", text: cents(x.evs[2]) })))))),
+        h("p", { class: "muted", style: "font-size:0.85rem", text: `Profit per contract is after Kalshi's estimated taker fee (${m.n} contract${m.n > 1 ? "s" : ""}: ${m.sides.map((x) => `${x.side} ${money(x.fee)}`).join(", ")}). A side only counts if it makes at least ${EDGE_MIN * 100}¢ in the typical case and still makes money in a calmer and a wilder market.` })));
+    }
+
+    // ---- price vs target ----
+    out.append(h("section", { class: "panel" }, h("h2", { text: "Price vs target" }),
+      h("div", { class: "facts" },
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Target" }), h("b", { class: "num", text: money(r.target) })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: st.spot ? "Live price" : "Price (screenshot)" }), h("b", { class: "num", text: money(m.S) })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Distance" }), h("b", { class: "num", text: m.S != null && r.target != null ? `${m.S - r.target >= 0 ? "+" : "−"}${money(Math.abs(m.S - r.target))}` : "—" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Typical move in time left" }), h("b", { class: "num", text: m.sd ? `±${money(m.sd)}` : "—" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Move Kalshi is pricing" }), h("b", { class: "num", text: m.ivMove ? `±${money(m.ivMove)}` : "—" })),
+        st.spot && r.shown ? h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Screenshot price" }), h("b", { class: "num", text: money(r.shown) })) : null),
+      h("p", { class: "muted", style: "font-size:0.88rem", text: [
+        st.spot ? `Live price from Alpha Vantage as of ${new Date(st.spot.at).toLocaleTimeString()}. Kalshi settles on its own index, which can differ slightly.` : `Live price: ${st.spotNote || "not fetched"}.`,
+        `Screenshot age: ${Math.round(st.ageSecs / 60)} min (from ${st.ageSource}).`,
+        m.zDist != null ? `The price is ${Math.abs(m.zDist).toFixed(2)} typical moves ${m.zDist >= 0 ? "above" : "below"} the target.` : ""].join(" ") }),
+      h("div", { class: "ctrls" },
+        h("label", { for: "k-left" }, "Minutes left now", h("input", { type: "number", id: "k-left", class: "numin", min: "0", step: "0.5", inputmode: "decimal", value: secsLeftNow() != null ? Math.max(0, secsLeftNow() / 60).toFixed(1) : "" })),
+        h("label", { for: "k-n" }, "Contracts", h("input", { type: "number", id: "k-n", class: "numin", min: "1", step: "1", inputmode: "numeric", value: String(m.n) })),
+        st.example ? null : h("button", { class: "ghost", id: "k-refresh", type: "button", text: "Refresh live price" })),
+      h("p", { class: "muted", id: "k-msg", style: "font-size:0.85rem", hidden: "" })));
+
+    // ---- what Claude read ----
+    out.append(h("section", { class: "panel" }, h("h2", { text: "What Claude read" }),
+      h("div", { class: "facts" },
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Market" }), h("b", { text: r.title || "—" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Countdown in screenshot" }), h("b", { class: "num", text: r.timeLeftText || "—" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Phone clock" }), h("b", { class: "num", text: r.clock || "—" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Up / Down" }), h("b", { class: "num", text: `${r.up ?? "—"}¢ / ${r.down ?? "—"}¢` })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Volume" }), h("b", { text: r.volume || "—" }))),
+      r.recent.length >= 2 ? reconChart({ price_points: r.recent.map((c, i) => ({ label: i === 0 ? (r.span ? `−${r.span} min` : "start") : i === r.recent.length - 1 ? "now" : "", close: c })), support: [], resistance: [], target: r.target }) : null,
+      r.rules ? h("p", { class: "muted", text: `Rules: ${r.rules}` }) : null,
+      r.notes ? h("p", { class: "muted", text: `Reading notes: ${r.notes}` }) : null,
+      h("p", { class: "muted", style: "font-size:0.85rem", text: "Check these against your screen. If a price or the target was misread, the answer above is wrong." })));
+
+    // interactions
+    countdownTimer = setInterval(() => { const el = $("#cd"); if (el) el.textContent = mmss(secsLeftNow()); }, 1000);
+    const left = $("#k-left"), nIn = $("#k-n"), refresh = $("#k-refresh");
+    left.addEventListener("change", () => { const v = num(left.value); if (v != null && v >= 0) { st.secsLeft = v * 60; st.setAt = Date.now(); renderK(); } });
+    nIn.addEventListener("change", () => { const v = num(nIn.value); if (v != null && v >= 1) { st.contracts = Math.round(v); $("#contracts").value = String(st.contracts); renderK(); } });
+    if (refresh) refresh.addEventListener("click", async () => {
+      refresh.disabled = true; const msg = $("#k-msg");
+      try { st.spot = await fetchSpot(r.asset, undefined); st.spotNote = ""; if (st.reviewState === "done") st.reviewState = "stale"; renderK(); }
+      catch (e) { msg.hidden = false; msg.textContent = `Couldn't refresh: ${avErrorCopy(e)}`; refresh.disabled = false; }
+    });
+    if (st.reviewState === "stale") {
+      const note = h("p", { class: "muted", text: "Price refreshed: the math above is updated, but Claude's review was for the earlier price. Run a new check for a fresh review." });
+      ticket.append(note);
+    }
+  }
+
+  function kalshiExample() {
+    const recent = [60984, 60990, 61002, 60996, 61011, 61020, 61015, 61027, 61034, 61029, 61041, 61050, 61046, 61058, 61062];
+    kState = { example: true, read: cleanK({ platform: "Kalshi", asset: "BTC", market_title: "Bitcoin price up or down in 15 minutes (example)", question_type: "up_down",
+        target_price: 61000, target_label: "Price to beat", current_price_shown: 61062, time_left: "8:30", status_bar_time: null,
+        up_price_cents: 71, down_price_cents: 31, up_chance_percent: 70, volume: "$48,200", recent_prices: recent, chart_span_minutes: 7, notes: "Fictional example." }),
+      spot: { price: 61062, at: Date.now(), fetchedAt: Date.now() }, ageSecs: 0, ageSource: "example", secsLeft: 510, setAt: Date.now(), contracts: 10, reviewState: "done" };
+    const m = computeK(kState);
+    kState.review = cleanReview({ call: m.call, confidence: "low", headline: "BTC is $62 above the target with 8½ minutes left, and Kalshi's 71¢ for Up is close to the math. There's no edge worth paying fees for.",
+      reasons: ["Math puts Up at about the same chance Kalshi does.", "After fees neither side clears the 3¢ bar.", "The recent climb is weak evidence over 8 minutes."],
+      checks: [{ name: "Prices read correctly", status: "pass", detail: "Up 71¢, Down 31¢, target $61,000." }, { name: "Time left", status: "pass", detail: "8:30 is enough time to place an order." },
+        { name: "Live price vs screenshot", status: "pass", detail: "They match." }, { name: "Edge after fees", status: "fail", detail: "Neither side is above +3¢." },
+        { name: "Spread and liquidity", status: "pass", detail: "2¢ spread, decent volume." }, { name: "Momentum", status: "warn", detail: "Up-drift over 7 minutes, but that rarely persists." }],
+      what_would_change_it: "Up dropping to about 62¢ or less while BTC stays $60+ above the target." }, m);
+    renderK();
+  }
+
+  // ---------- mode switching ----------
+  const HINTS = { kalshi: "From Photos. Include the target price, the countdown, the Up/Down prices and your phone's clock.", stock: "From Photos or Files. Best with the ticker and price axis visible." };
+  function applyMode() {
+    const md = mode();
+    $("#kalshi-opts").hidden = md !== "kalshi"; $("#stock-opts").hidden = md !== "stock";
+    if (!file) $("#file-hint").textContent = HINTS[md];
+    go.textContent = md === "kalshi" ? "Check this market" : "Analyze chart";
+    steps.hidden = true; say("");
+    if (!hasResult) (md === "kalshi" ? kalshiExample : stockExample)();
+  }
+  document.querySelectorAll('input[name="mode"]').forEach((el) => el.addEventListener("change", applyMode));
+  applyMode();
 
   // ---------- light up capabilities ----------
   (async () => {
