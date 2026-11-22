@@ -1,0 +1,609 @@
+<title>Stock Chart Reader</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one phone-first column — upload, progress, then the verdict ticket and its evidence. */
+:root {
+  --bg: #eef2f4;
+  --surface: #ffffff;
+  --sunk: #e3e9ed;
+  --ink: #13212c;
+  --muted: #5a6b78;
+  --line: #cfd8de;
+  --accent: #2752b8;
+  --accent-ink: #ffffff;
+  --up: #0f7f52;
+  --down: #c2352b;
+  --flat: #8a6a12;
+  --up-bg: #e1f3ea;
+  --down-bg: #fbe6e3;
+  --flat-bg: #f6eed7;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e161d; --surface: #16212a; --sunk: #1d2a35; --ink: #e4ebf0; --muted: #93a4b1; --line: #2b3b48;
+    --accent: #7fa2ff; --accent-ink: #0b1420; --up: #4fd39a; --down: #ff7d72; --flat: #e0bf5c;
+    --up-bg: #13342a; --down-bg: #3a1c1a; --flat-bg: #332a12; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e161d; --surface: #16212a; --sunk: #1d2a35; --ink: #e4ebf0; --muted: #93a4b1; --line: #2b3b48;
+  --accent: #7fa2ff; --accent-ink: #0b1420; --up: #4fd39a; --down: #ff7d72; --flat: #e0bf5c;
+  --up-bg: #13342a; --down-bg: #3a1c1a; --flat-bg: #332a12; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 18px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: 1.75rem; font-weight: 800; }
+h2 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); font-weight: 600; }
+.muted { color: var(--muted); }
+header { display: grid; gap: 6px; }
+header p { color: var(--muted); max-width: 60ch; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.section { display: grid; gap: 10px; min-width: 0; }
+
+/* Upload */
+.drop { display: grid; grid-template-columns: 84px 1fr; gap: 14px; align-items: center; border: 1.5px dashed var(--line); border-radius: 12px; padding: 12px; cursor: pointer; background: var(--sunk); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.thumb { width: 84px; height: 64px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); object-fit: cover; display: grid; place-items: center; color: var(--muted); }
+.drop strong { display: block; font-weight: 600; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.seg label { padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 0.9rem; background: var(--surface); }
+.seg input:checked + label { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+button { font: inherit; font-weight: 600; border-radius: 10px; padding: 11px 18px; border: 1px solid transparent; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: var(--accent-ink); }
+.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.notice { font-size: 0.9rem; padding: 10px 12px; border-radius: 10px; background: var(--sunk); }
+.notice.bad { background: var(--down-bg); color: var(--ink); }
+
+/* Progress */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.steps li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; font-size: 0.93rem; }
+.dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 0.7rem; font-family: var(--font-mono); color: var(--muted); }
+.steps li[data-s="run"] .dot { border-color: var(--accent); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+.steps li[data-s="done"] .dot { background: var(--up); border-color: var(--up); color: var(--surface); }
+.steps li[data-s="skip"] .dot { border-style: dashed; }
+.steps li[data-s="fail"] .dot { background: var(--down); border-color: var(--down); color: var(--surface); }
+.steps small { display: block; color: var(--muted); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .steps li[data-s="run"] .dot { animation: none; border-top-color: var(--accent); } }
+
+/* Verdict ticket */
+.ticket { border-radius: var(--radius); padding: 20px 18px; display: grid; gap: 14px; border: 1px solid var(--line); background: var(--surface); position: relative; overflow: hidden; }
+.ticket[data-dir="up"] { background: var(--up-bg); border-color: color-mix(in srgb, var(--up) 35%, transparent); }
+.ticket[data-dir="down"] { background: var(--down-bg); border-color: color-mix(in srgb, var(--down) 35%, transparent); }
+.ticket[data-dir="sideways"] { background: var(--flat-bg); border-color: color-mix(in srgb, var(--flat) 35%, transparent); }
+.badge-example { justify-self: start; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; background: var(--ink); color: var(--bg); }
+.ticket-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sym { font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; }
+.call { font-family: var(--font-display); font-weight: 800; font-size: 2.6rem; line-height: 1; letter-spacing: -0.02em; }
+.ticket[data-dir="up"] .call { color: var(--up); }
+.ticket[data-dir="down"] .call { color: var(--down); }
+.ticket[data-dir="sideways"] .call { color: var(--flat); }
+.meter { display: grid; gap: 6px; }
+.bar { position: relative; height: 12px; border-radius: 999px; background: linear-gradient(90deg, var(--down) 0%, var(--line) 50%, var(--up) 100%); opacity: 0.9; }
+.bar .mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: 0.35; }
+.bar .pin { position: absolute; top: 50%; width: 20px; height: 20px; border-radius: 50%; background: var(--surface); border: 3px solid var(--ink); transform: translate(-50%, -50%); }
+.scale { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); }
+.pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { font-size: 0.78rem; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); }
+.pill.bullish { color: var(--up); border-color: currentColor; }
+.pill.bearish { color: var(--down); border-color: currentColor; }
+.pill.neutral { color: var(--muted); }
+
+/* Evidence */
+.chart-wrap { overflow-x: auto; }
+svg.recon { display: block; width: 100%; height: auto; max-width: 100%; }
+.signals { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; }
+.signals li { display: grid; grid-template-columns: 6px 1fr auto; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: start; }
+.signals li:first-child { border-top: 0; }
+.stripe { width: 6px; align-self: stretch; border-radius: 3px; background: var(--line); }
+.stripe.bullish { background: var(--up); } .stripe.bearish { background: var(--down); }
+.signals .m { font-weight: 600; }
+.signals .r { color: var(--muted); font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
+.w { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.cases { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .cases { grid-template-columns: 1fr; } }
+.case { border-radius: 10px; padding: 12px; background: var(--sunk); display: grid; gap: 4px; min-width: 0; }
+.case h3 { font-size: 0.9rem; }
+.case.bull h3 { color: var(--up); } .case.bear h3 { color: var(--down); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; border-top: 0; }
+td.v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tag { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.tag.bullish { color: var(--up); } .tag.bearish { color: var(--down); } .tag.neutral { color: var(--muted); }
+ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
+.news { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.news a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.news a:hover { text-decoration: underline; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.fact { display: grid; gap: 2px; min-width: 0; }
+.fact b { font-weight: 600; overflow-wrap: anywhere; }
+footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">Chart → indicators → market data → verdict</span>
+    <h1>Stock Chart Reader</h1>
+    <p>Pick a screenshot of a price chart. Claude reads it, standard indicators run on the prices, real daily data and news are pulled from your Alpha Vantage connector when available, and you get a probability-weighted call.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="up-h">
+    <h2 id="up-h">Your chart</h2>
+    <label class="drop" for="file">
+      <span class="thumb" id="thumb" aria-hidden="true">
+        <svg width="34" height="26" viewBox="0 0 34 26" fill="none"><path d="M2 22 L10 14 L16 18 L24 7 L32 11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 25 H32" stroke="currentColor" stroke-width="1.4"/></svg>
+      </span>
+      <span>
+        <strong id="file-name">Choose a chart screenshot</strong>
+        <span class="muted" id="file-hint">From Photos or Files. Best with the ticker and price axis visible.</span>
+      </span>
+      <input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif">
+    </label>
+
+    <div class="section">
+      <span class="eyebrow" id="hz-l">Forecast window</span>
+      <div class="seg" role="radiogroup" aria-labelledby="hz-l">
+        <input type="radio" name="hz" id="hz1" value="1 week"><label for="hz1">1 week</label>
+        <input type="radio" name="hz" id="hz2" value="1–4 weeks" checked><label for="hz2">1–4 weeks</label>
+        <input type="radio" name="hz" id="hz3" value="3 months"><label for="hz3">3 months</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="go" disabled>Analyze chart</button>
+      <button class="ghost" id="stop" hidden>Stop</button>
+    </div>
+    <p class="notice" id="status" hidden></p>
+
+    <ol class="steps" id="steps" hidden>
+      <li data-step="read"><span class="dot">1</span><span>Read the screenshot<small></small></span></li>
+      <li data-step="tech"><span class="dot">2</span><span>Run indicators on the chart's prices<small></small></span></li>
+      <li data-step="market"><span class="dot">3</span><span>Fetch real prices and news<small></small></span></li>
+      <li data-step="verdict"><span class="dot">4</span><span>Weigh the evidence<small></small></span></li>
+    </ol>
+  </section>
+
+  <div id="result" class="section" aria-live="polite"></div>
+
+  <footer>Not financial advice. Prices read off a screenshot are approximate, and short-term price moves are close to a coin flip. Each analysis uses your own Claude usage (two requests) and a couple of Alpha Vantage calls.</footer>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const AV = "Alpha Vantage MCP Server";
+  const $ = (s) => document.querySelector(s);
+
+  // ---------- tiny DOM helper (text only, never innerHTML for data) ----------
+  function h(tag, attrs, ...kids) {
+    const el = document.createElementNS(tag.startsWith("svg:") ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml", tag.replace("svg:", ""));
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") el.setAttribute("class", v); else if (k === "text") el.textContent = v; else el.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+    return el;
+  }
+  const fmt = (n, d = 2) => (typeof n === "number" && isFinite(n) ? n.toFixed(d) : "—");
+  const sgn = (n, d = 1) => (typeof n === "number" && isFinite(n) ? (n >= 0 ? "+" : "") + n.toFixed(d) : "—");
+  const num = (v) => { const n = typeof v === "string" ? parseFloat(v.replace(/[,$]/g, "")) : v; return typeof n === "number" && isFinite(n) ? n : null; };
+  const pick = (v, allowed, dflt) => (allowed.includes(v) ? v : dflt);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ---------- technical indicators ----------
+  const T = {
+    sma(v, p) { return v.length < p ? null : v.slice(-p).reduce((a, b) => a + b, 0) / p; },
+    ema(v, p) { const k = 2 / (p + 1); const o = [v[0]]; for (let i = 1; i < v.length; i++) o.push(v[i] * k + o[i - 1] * (1 - k)); return o; },
+    rsi(v, p = 14) {
+      if (v.length <= p) return null;
+      let g = 0, l = 0;
+      for (let i = 1; i <= p; i++) { const c = v[i] - v[i - 1]; g += Math.max(c, 0); l += Math.max(-c, 0); }
+      g /= p; l /= p;
+      for (let i = p + 1; i < v.length; i++) { const c = v[i] - v[i - 1]; g = (g * (p - 1) + Math.max(c, 0)) / p; l = (l * (p - 1) + Math.max(-c, 0)) / p; }
+      return l === 0 ? 100 : 100 - 100 / (1 + g / l);
+    },
+    macd(v) {
+      if (v.length < 35) return null;
+      const f = T.ema(v, 12), s = T.ema(v, 26), line = f.map((x, i) => x - s[i]);
+      const sig = T.ema(line.slice(25), 9); const L = line[line.length - 1], S = sig[sig.length - 1];
+      return { line: L, signal: S, hist: L - S };
+    },
+    slope(v) {
+      const n = v.length; if (n < 3) return null;
+      const mx = (n - 1) / 2, my = v.reduce((a, b) => a + b, 0) / n; let nu = 0, de = 0;
+      v.forEach((y, x) => { nu += (x - mx) * (y - my); de += (x - mx) ** 2; });
+      return de && my ? (nu / de) / my * 100 : null;
+    },
+    bb(v, p = 20) {
+      if (v.length < p) return null;
+      const w = v.slice(-p), m = w.reduce((a, b) => a + b, 0) / p, sd = Math.sqrt(w.reduce((a, b) => a + (b - m) ** 2, 0) / p);
+      return sd ? (v[v.length - 1] - (m - 2 * sd)) / (4 * sd) : 0.5;
+    },
+    roc(v, p = 10) { return v.length <= p || !v[v.length - p - 1] ? null : (v[v.length - 1] / v[v.length - p - 1] - 1) * 100; },
+  };
+  function analyze(closes, source) {
+    const v = closes.filter((x) => typeof x === "number" && isFinite(x));
+    const sig = [];
+    const add = (method, value, score) => sig.push({ method, value, score, direction: score > 0 ? "bullish" : score < 0 ? "bearish" : "neutral" });
+    if (v.length >= 3) {
+      const last = v[v.length - 1];
+      const sl = T.slope(v); if (sl != null) add("Trend (linear regression)", `${sgn(sl, 2)}% per bar`, sl > 0.05 ? 1 : sl < -0.05 ? -1 : 0);
+      for (const p of [20, 50]) { const a = T.sma(v, p); if (a != null) { const d = (last / a - 1) * 100; add(`Price vs SMA ${p}`, `${sgn(d)}% vs ${fmt(a)}`, d > 1 ? 1 : d < -1 ? -1 : 0); } }
+      const s20 = T.sma(v, 20), s50 = T.sma(v, 50);
+      if (s20 != null && s50 != null) add("SMA 20/50 cross", s20 > s50 ? "20 above 50 (golden)" : "20 below 50 (death)", s20 > s50 ? 1 : -1);
+      const r = T.rsi(v);
+      if (r != null) {
+        const [s, note] = r >= 70 ? [-1, "overbought"] : r <= 30 ? [1, "oversold"] : r >= 55 ? [1, "bullish momentum"] : r <= 45 ? [-1, "bearish momentum"] : [0, "neutral"];
+        add("RSI(14)", `${fmt(r, 1)} · ${note}`, s);
+      }
+      const m = T.macd(v); if (m) add("MACD(12,26,9)", `histogram ${sgn(m.hist, 3)}`, m.hist > 0 ? 1 : m.hist < 0 ? -1 : 0);
+      const b = T.bb(v); if (b != null) add("Bollinger %B(20,2)", fmt(b, 2), b > 1 ? -1 : b < 0 ? 1 : 0);
+      const rc = T.roc(v); if (rc != null) add("Rate of change (10)", `${sgn(rc)}%`, rc > 1 ? 1 : rc < -1 ? -1 : 0);
+    }
+    const score = sig.reduce((a, s) => a + s.score, 0);
+    const ratio = sig.length ? score / sig.length : 0;
+    return { source, n: v.length, signals: sig, score, lean: ratio >= 0.25 ? "bullish" : ratio <= -0.25 ? "bearish" : "neutral" };
+  }
+
+  // ---------- normalize Claude's JSON ----------
+  function cleanReading(r) {
+    r = r && typeof r === "object" ? r : {};
+    const pts = Array.isArray(r.price_points) ? r.price_points.map((p) => ({ label: String(p?.label ?? ""), close: num(p?.close) })).filter((p) => p.close != null) : [];
+    const nums = (a) => (Array.isArray(a) ? a.map(num).filter((x) => x != null) : []);
+    const strs = (a) => (Array.isArray(a) ? a.map((x) => String(x)).filter(Boolean).slice(0, 12) : []);
+    const tk = typeof r.ticker === "string" ? r.ticker.trim().toUpperCase().replace(/^[A-Z]+:/, "") : "";
+    return {
+      is_stock_chart: r.is_stock_chart !== false,
+      ticker: /^[A-Z0-9.\-]{1,10}$/.test(tk) ? tk : null,
+      company: typeof r.company_or_asset === "string" ? r.company_or_asset : null,
+      timeframe: typeof r.timeframe === "string" ? r.timeframe : null,
+      chart_type: typeof r.chart_type === "string" ? r.chart_type : "chart",
+      current_price: num(r.current_price) ?? (pts.length ? pts[pts.length - 1].close : null),
+      price_points: pts,
+      indicators: strs(r.visible_indicators), support: nums(r.support_levels), resistance: nums(r.resistance_levels),
+      patterns: strs(r.patterns), volume: typeof r.volume_observation === "string" ? r.volume_observation : null,
+      notes: typeof r.reading_notes === "string" ? r.reading_notes : "",
+    };
+  }
+  function cleanVerdict(v, horizon) {
+    v = v && typeof v === "object" ? v : {};
+    let p = num(v.probability_up); if (p != null && p > 1) p = p / 100; p = Math.min(0.95, Math.max(0.05, p ?? 0.5));
+    const dir = pick(v.direction, ["up", "down", "sideways"], p > 0.55 ? "up" : p < 0.45 ? "down" : "sideways");
+    return {
+      direction: dir, p, confidence: pick(v.confidence, ["low", "medium", "high"], "low"), horizon,
+      summary: String(v.summary || ""),
+      signals: (Array.isArray(v.signals) ? v.signals : []).slice(0, 14).map((s) => ({
+        method: String(s?.method || "Signal"), reading: String(s?.reading || ""),
+        direction: pick(s?.direction, ["bullish", "bearish", "neutral"], "neutral"), weight: pick(s?.weight, ["low", "medium", "high"], "medium"),
+      })),
+      bull: String(v.bull_case || ""), bear: String(v.bear_case || ""), levels: String(v.key_levels || ""),
+      risks: (Array.isArray(v.risks) ? v.risks : []).map(String).slice(0, 8),
+    };
+  }
+
+  // ---------- prompts ----------
+  const READ_PROMPT = `The attached image is a screenshot of a stock / asset price chart. Read only what is actually visible.
+Read the y-axis scale carefully, then sample 25-60 evenly spaced approximate closing prices across the whole visible range, oldest (left) to newest (right). For candlesticks use each candle's close.
+Reply with only this JSON object:
+{"is_stock_chart": true, "ticker": "AAPL or null", "company_or_asset": "name or null", "timeframe": "e.g. 6M daily, or null",
+ "chart_type": "candlestick|line|bar|area|other", "current_price": 123.45,
+ "price_points": [{"label": "Oct 3", "close": 120.1}],
+ "visible_indicators": ["SMA 50", "RSI 14 at ~68"], "support_levels": [115.0], "resistance_levels": [130.0],
+ "patterns": ["ascending triangle"], "volume_observation": "text or null",
+ "reading_notes": "how legible the chart was and what is uncertain"}
+If the image is not a price chart, set is_stock_chart to false and leave the lists empty.`;
+
+  function verdictPrompt(payload) {
+    return `You are a disciplined market analyst producing a probabilistic call, not a promise.
+Weigh every method below: chart patterns and levels, indicators computed from the screenshot (approximate — weight lower), indicators computed from real daily closes (when present — weight higher), recent news sentiment (when present), and what technical-analysis research generally finds about how reliable the specific patterns seen are.
+Rules: short-horizon moves are close to a coin flip, so probability_up should rarely be outside 0.30-0.70; use "high" confidence only when independent methods strongly agree. If real data and the screenshot disagree, trust the real data and say so. Do not invent news.
+
+DATA:
+${JSON.stringify(payload)}
+
+Reply with only this JSON object:
+{"direction": "up|down|sideways", "probability_up": 0.55, "confidence": "low|medium|high",
+ "summary": "2-4 plain sentences",
+ "signals": [{"method": "RSI(14)", "reading": "what it shows now", "direction": "bullish|bearish|neutral", "weight": "low|medium|high"}],
+ "bull_case": "1-2 sentences", "bear_case": "1-2 sentences",
+ "key_levels": "prices that would confirm or invalidate the call", "risks": ["short items"]}`;
+  }
+
+  // ---------- Alpha Vantage via connector ----------
+  async function avCall(mcp, tool, input, signal) {
+    const res = await mcp.callTool(AV, tool, input, { signal });
+    const p = res && res.payload;
+    if (p && typeof p === "object" && p.error) throw { code: "av_error", message: String(p.error.message || p.error.detail || "Alpha Vantage refused the request.") };
+    if (p && typeof p === "object" && (p.Note || p.Information || p["Error Message"])) throw { code: "av_error", message: String(p.Note || p.Information || p["Error Message"]) };
+    return p;
+  }
+  function avErrorCopy(e) {
+    switch (e && e.code) {
+      case "server_not_connected": return "Alpha Vantage connector isn't connected. Add it in claude.ai Settings → Connectors.";
+      case "needs_reauth": return "Reconnect Alpha Vantage in claude.ai Settings → Connectors.";
+      case "not_in_manifest": case "approval_required": return "Alpha Vantage wasn't allowed for this page.";
+      case "selection_required": return "Choose which Alpha Vantage connector to use when claude.ai asks.";
+      case "blocked_by_policy": return "Your organization blocks this Alpha Vantage tool.";
+      case "server_unavailable": return "Alpha Vantage didn't answer in time.";
+      case "av_error": return /premium/i.test(e.message) ? "Not included in your Alpha Vantage plan." : /rate|frequency|spread out|25 requests/i.test(e.message) ? "Alpha Vantage rate limit reached (free keys allow 25 requests a day)." : e.message;
+      case "cancelled": return "Stopped.";
+      default: return "Alpha Vantage request failed.";
+    }
+  }
+  function parseNews(p, ticker) {
+    const feed = p && Array.isArray(p.feed) ? p.feed : [];
+    return feed.slice(0, 8).map((a) => {
+      const ts = Array.isArray(a.ticker_sentiment) ? a.ticker_sentiment.find((t) => String(t.ticker).toUpperCase() === ticker) : null;
+      const t = String(a.time_published || "");
+      return {
+        title: String(a.title || "Untitled"), url: /^https:\/\//.test(a.url || "") ? a.url : null, source: String(a.source || ""),
+        date: /^\d{8}/.test(t) ? `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}` : "",
+        label: String((ts && ts.ticker_sentiment_label) || a.overall_sentiment_label || ""),
+        score: num(ts ? ts.ticker_sentiment_score : a.overall_sentiment_score),
+      };
+    });
+  }
+
+  // ---------- state + UI wiring ----------
+  let file = null, ctl = null, sample = null, mcp = null, imagesOK = false;
+  const go = $("#go"), stopBtn = $("#stop"), status = $("#status"), steps = $("#steps");
+
+  function say(msg, bad) { status.hidden = !msg; status.textContent = msg || ""; status.classList.toggle("bad", !!bad); }
+  function step(name, state, note) {
+    const li = steps.querySelector(`[data-step="${name}"]`); li.dataset.s = state;
+    li.querySelector("small").textContent = note || "";
+    const d = li.querySelector(".dot"); d.textContent = state === "done" ? "✓" : state === "fail" ? "!" : state === "skip" ? "–" : String([...steps.children].indexOf(li) + 1);
+  }
+  function horizon() { return document.querySelector('input[name="hz"]:checked').value; }
+
+  $("#file").addEventListener("change", (e) => {
+    file = e.target.files && e.target.files[0] || null;
+    const thumb = $("#thumb");
+    if (file) {
+      $("#file-name").textContent = file.name || "Screenshot selected";
+      $("#file-hint").textContent = `${Math.round(file.size / 1024)} KB · tap to change`;
+      const img = h("img", { class: "thumb", alt: "Selected chart" }); img.src = URL.createObjectURL(file);
+      thumb.replaceWith(img); img.id = "thumb";
+    }
+    go.disabled = !file || !sample;
+    say("");
+  });
+
+  stopBtn.addEventListener("click", () => ctl && ctl.abort());
+
+  function sampleErrorCopy(e) {
+    switch (e && e.code) {
+      case "not_granted": case "sampling_disabled": case "not_declared": case "capability_disabled": return "This page isn't allowed to use Claude for your account, so it can't analyze charts here.";
+      case "images_unavailable": return "This view can't send images to Claude. Open the page in claude.ai.";
+      case "image_rejected": return "That image couldn't be used. Try a PNG or JPEG screenshot under 20 MB.";
+      case "rate_limited": return e.reason === "usage_limit" ? "You've reached your Claude usage limit. Try again later." : "Too many requests just now. Wait a minute and try again.";
+      case "session_expired": return "Your session expired. Sign in to claude.ai again.";
+      case "refused": return "Claude declined to analyze this image.";
+      case "invalid_json": case "empty_completion": return "Claude's answer came back malformed. Tap Analyze to try again.";
+      case "cancelled": return "Stopped.";
+      default: return "Something went wrong reaching Claude. Tap Analyze to try again.";
+    }
+  }
+
+  go.addEventListener("click", async () => {
+    if (!file || !sample) return;
+    ctl = new AbortController(); const signal = ctl.signal;
+    go.disabled = true; stopBtn.hidden = false; steps.hidden = false; say("");
+    ["read", "tech", "market", "verdict"].forEach((s) => step(s, "wait"));
+    const hz = horizon();
+    try {
+      // 1. Read the chart
+      step("read", "run", "Claude is looking at your screenshot. This usually takes 20–60 seconds.");
+      const reading = cleanReading(await sample.json(READ_PROMPT, { images: file, signal }));
+      if (!reading.is_stock_chart) { step("read", "fail", "This doesn't look like a price chart."); say("That image doesn't look like a price chart. Try a screenshot with a visible price line or candles.", true); return; }
+      step("read", "done", `${reading.ticker || reading.company || "Unknown ticker"} · ${reading.price_points.length} prices read · ${reading.patterns.length} pattern(s)`);
+
+      // 2. Indicators on screenshot prices
+      const techChart = analyze(reading.price_points.map((p) => p.close), "Screenshot (approximate)");
+      step("tech", "done", `${techChart.signals.length} indicators · leans ${techChart.lean}`);
+
+      // 3. Real data + news
+      let techMarket = null, news = [], marketNote = "", newsNote = "", lastClose = null;
+      if (!reading.ticker) { step("market", "skip", "No ticker visible on the chart, so real data was skipped."); marketNote = "No ticker visible."; }
+      else if (!mcp) { step("market", "skip", "Alpha Vantage isn't available in this view."); marketNote = "Connector unavailable."; }
+      else {
+        step("market", "run", `Daily prices for ${reading.ticker}…`);
+        try {
+          const p = await avCall(mcp, "TIME_SERIES_DAILY", { symbol: reading.ticker, outputsize: "compact", datatype: "json" }, signal);
+          const series = p && p["Time Series (Daily)"];
+          if (!series) throw { code: "av_error", message: `No daily data found for ${reading.ticker}.` };
+          const days = Object.keys(series).sort();
+          const closes = days.map((d) => num(series[d]["4. close"])).filter((x) => x != null);
+          lastClose = { date: days[days.length - 1], close: closes[closes.length - 1] };
+          techMarket = analyze(closes, `Alpha Vantage daily closes (${days[0]} → ${lastClose.date})`);
+        } catch (e) { if (signal.aborted) throw { code: "cancelled" }; marketNote = avErrorCopy(e); }
+        step("market", "run", `News for ${reading.ticker}…`);
+        await sleep(1300); // free Alpha Vantage keys allow one request per second
+        try {
+          const p = await avCall(mcp, "NEWS_SENTIMENT", { tickers: reading.ticker, limit: 12, sort: "LATEST" }, signal);
+          news = parseNews(p, reading.ticker);
+          if (!news.length) newsNote = "No recent articles found.";
+        } catch (e) { if (signal.aborted) throw { code: "cancelled" }; newsNote = avErrorCopy(e); }
+        step("market", techMarket || news.length ? "done" : "skip",
+          [techMarket ? `${techMarket.n} real daily closes · leans ${techMarket.lean}` : `Prices: ${marketNote}`, news.length ? `${news.length} headlines` : `News: ${newsNote}`].join(" · "));
+      }
+
+      // 4. Verdict
+      step("verdict", "run", "Claude is weighing everything. Usually under a minute.");
+      const payload = {
+        horizon: hz, today: new Date().toISOString().slice(0, 10),
+        chart_reading: { ...reading, price_points: reading.price_points.map((p) => p.close) },
+        technicals_from_screenshot: techChart,
+        technicals_from_real_daily_data: techMarket, latest_real_close: lastClose,
+        news: news.length ? news.map(({ title, source, date, label, score }) => ({ title, source, date, label, score })) : `unavailable: ${newsNote || marketNote}`,
+      };
+      const verdict = cleanVerdict(await sample.json(verdictPrompt(payload), { signal }), hz);
+      step("verdict", "done", "Done.");
+      render({ reading, techChart, techMarket, news, newsNote, marketNote, verdict, lastClose, example: false });
+      $("#result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    } catch (e) {
+      const cur = steps.querySelector('[data-s="run"]'); if (cur) step(cur.dataset.step, "fail", "");
+      say(sampleErrorCopy(e), e && e.code !== "cancelled");
+      if (e && ["not_granted", "sampling_disabled", "not_declared", "capability_disabled", "images_unavailable"].includes(e.code)) sample = null;
+    } finally {
+      go.disabled = !file || !sample; stopBtn.hidden = true; ctl = null;
+    }
+  });
+
+  // ---------- rendering ----------
+  function reconChart(reading, lastClose) {
+    const pts = reading.price_points; if (pts.length < 2) return h("p", { class: "muted", text: "Not enough prices were read to redraw the chart." });
+    const W = 460, H = 220, L = 6, R = 58, Tp = 14, B = 26;
+    const closes = pts.map((p) => p.close);
+    let lo = Math.min(...closes), hi = Math.max(...closes);
+    const span0 = hi - lo || hi * 0.05 || 1;
+    const levels = [...reading.support.map((v) => ["S", v]), ...reading.resistance.map((v) => ["R", v])].filter(([, v]) => v >= lo - span0 * 0.6 && v <= hi + span0 * 0.6);
+    levels.forEach(([, v]) => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
+    const pad = (hi - lo || 1) * 0.08; lo -= pad; hi += pad;
+    const x = (i) => L + (i / (pts.length - 1)) * (W - L - R);
+    const y = (v) => Tp + (1 - (v - lo) / (hi - lo)) * (H - Tp - B);
+    const line = closes.map((c, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(c).toFixed(1)}`).join(" ");
+    const area = `${line} L${x(pts.length - 1).toFixed(1)},${(H - B).toFixed(1)} L${x(0).toFixed(1)},${(H - B).toFixed(1)} Z`;
+    const up = closes[closes.length - 1] >= closes[0];
+    const col = up ? "var(--up)" : "var(--down)";
+    const svg = h("svg:svg", { class: "recon", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Chart redrawn from the prices Claude read" });
+    // grid: 4 ticks on one scale
+    for (let k = 0; k <= 3; k++) {
+      const v = lo + ((hi - lo) * k) / 3, yy = y(v);
+      svg.append(h("svg:line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "var(--line)", "stroke-width": 1 }));
+      svg.append(h("svg:text", { x: W - R + 6, y: yy + 4, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Mono, monospace", text: fmt(v) }));
+    }
+    svg.append(h("svg:path", { d: area, fill: col, "fill-opacity": 0.1, stroke: "none" }));
+    for (const [kind, v] of levels) {
+      const yy = y(v), c = kind === "S" ? "var(--up)" : "var(--down)";
+      svg.append(h("svg:line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: c, "stroke-width": 1.2, "stroke-dasharray": "5 4" }));
+      svg.append(h("svg:text", { x: L + 4, y: yy - 4, fill: c, "font-size": 11.5, "font-family": "IBM Plex Mono, monospace", text: `${kind === "S" ? "Support" : "Resistance"} ${fmt(v)}` }));
+    }
+    svg.append(h("svg:path", { d: line, fill: "none", stroke: col, "stroke-width": 2.2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const lx = x(pts.length - 1), ly = y(closes[closes.length - 1]);
+    svg.append(h("svg:circle", { cx: lx, cy: ly, r: 4.5, fill: col, stroke: "var(--surface)", "stroke-width": 2 }));
+    svg.append(h("svg:text", { x: L, y: H - 8, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Sans, sans-serif", text: pts[0].label }));
+    svg.append(h("svg:text", { x: W - R, y: H - 8, fill: "var(--muted)", "font-size": 12, "font-family": "IBM Plex Sans, sans-serif", "text-anchor": "end", text: pts[pts.length - 1].label }));
+    return h("div", { class: "chart-wrap" }, svg);
+  }
+
+  function techTable(a, b) {
+    const methods = [...new Set([...a.signals.map((s) => s.method), ...(b ? b.signals.map((s) => s.method) : [])])];
+    const cell = (rep, m) => { const s = rep && rep.signals.find((x) => x.method === m); return s ? h("td", {}, h("div", { class: "v", text: s.value }), h("span", { class: `tag ${s.direction}`, text: s.direction })) : h("td", { class: "muted", text: "—" }); };
+    return h("div", { class: "tablewrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", { text: "Method" }), h("th", { text: "Screenshot" }), b ? h("th", { text: "Real daily data" }) : null)),
+      h("tbody", {}, methods.map((m) => h("tr", {}, h("td", { text: m }), cell(a, m), b ? cell(b, m) : null)),
+        h("tr", {}, h("td", {}, h("b", { text: "Net lean" })),
+          h("td", {}, h("span", { class: `tag ${a.lean}`, text: `${a.lean} (${a.score >= 0 ? "+" : ""}${a.score})` })),
+          b ? h("td", {}, h("span", { class: `tag ${b.lean}`, text: `${b.lean} (${b.score >= 0 ? "+" : ""}${b.score})` })) : null))));
+  }
+
+  function render(d) {
+    const { reading: r, verdict: v } = d;
+    const name = r.ticker || r.company || "Unknown asset";
+    const arrow = { up: "▲ Up", down: "▼ Down", sideways: "► Sideways" }[v.direction];
+    const out = $("#result"); out.replaceChildren();
+
+    const ticket = h("section", { class: "ticket", "data-dir": v.direction, "aria-label": "Verdict" },
+      d.example ? h("span", { class: "badge-example", text: "Example result · upload your own chart to replace it" }) : null,
+      h("div", { class: "ticket-top" },
+        h("div", {}, h("div", { class: "sym", text: name }), h("div", { class: "muted", text: [r.timeframe, r.chart_type, r.current_price != null ? `last ${fmt(r.current_price)}` : null].filter(Boolean).join(" · ") })),
+        h("div", { class: "eyebrow", text: `Next ${v.horizon}` })),
+      h("div", { class: "call", text: arrow }),
+      h("div", { class: "meter" },
+        h("div", { class: "ticket-top" }, h("span", {}, "Chance it's higher: ", h("b", { class: "num", text: `${Math.round(v.p * 100)}%` })), h("span", { class: "pill", text: `${v.confidence} confidence` })),
+        (() => { const bar = h("div", { class: "bar", role: "meter", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(v.p * 100), "aria-label": "Probability the price is higher" }, h("span", { class: "mid" }), h("span", { class: "pin" })); bar.lastChild.style.left = `${v.p * 100}%`; return bar; })(),
+        h("div", { class: "scale" }, h("span", { text: "Down" }), h("span", { text: "Coin flip" }), h("span", { text: "Up" }))),
+      h("p", { text: v.summary }),
+      v.levels ? h("p", {}, h("b", { text: "Key levels: " }), v.levels) : null);
+    out.append(ticket);
+
+    out.append(h("section", { class: "panel" }, h("h2", { text: "What Claude read off the chart" }), reconChart(r, d.lastClose),
+      h("div", { class: "facts" },
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Patterns" }), h("b", { text: r.patterns.join(", ") || "None clear" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "On-chart indicators" }), h("b", { text: r.indicators.join(", ") || "None" })),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Volume" }), h("b", { text: r.volume || "Not shown" })),
+        d.lastClose ? h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Latest real close" }), h("b", { class: "num", text: `${fmt(d.lastClose.close)} on ${d.lastClose.date}` })) : null),
+      r.notes ? h("p", { class: "muted", text: `Reading notes: ${r.notes}` }) : null));
+
+    out.append(h("section", { class: "panel" }, h("h2", { text: "How each method votes" }),
+      h("ul", { class: "signals" }, v.signals.map((s) => h("li", {}, h("span", { class: `stripe ${s.direction}` }),
+        h("div", { style: "min-width:0" }, h("div", { class: "m", text: s.method }), h("div", { class: "r", text: s.reading })),
+        h("div", { style: "text-align:right" }, h("span", { class: `pill ${s.direction}`, text: s.direction }), h("div", { class: "w", text: `${s.weight} weight` })))))));
+
+    out.append(h("div", { class: "cases" },
+      h("div", { class: "case bull" }, h("h3", { text: "Bull case" }), h("p", { text: v.bull || "—" })),
+      h("div", { class: "case bear" }, h("h3", { text: "Bear case" }), h("p", { text: v.bear || "—" }))));
+
+    out.append(h("section", { class: "panel" }, h("h2", { text: "Indicator math" }),
+      h("p", { class: "muted", text: d.techMarket ? d.techMarket.source : `Real daily data: ${d.marketNote || "not used"}` }),
+      techTable(d.techChart, d.techMarket)));
+
+    out.append(h("section", { class: "panel" }, h("h2", { text: "Recent news" }),
+      d.news.length ? h("ul", { class: "news" }, d.news.map((n) => h("li", {},
+        n.url ? h("a", { href: n.url, target: "_blank", rel: "noopener", text: n.title }) : h("b", { text: n.title }),
+        h("div", { class: "muted", text: [n.source, n.date, n.label && `${n.label}${n.score != null ? ` (${sgn(n.score, 2)})` : ""}`].filter(Boolean).join(" · ") }))))
+        : h("p", { class: "muted", text: d.newsNote || "News wasn't checked." })));
+
+    if (v.risks.length) out.append(h("section", { class: "panel" }, h("h2", { text: "Risks to the call" }), h("ul", { class: "plain" }, v.risks.map((x) => h("li", { text: x })))));
+  }
+
+  // ---------- example result shown at rest (fictional data) ----------
+  (function example() {
+    const closes = [41.2,41.8,41.1,42.4,43.0,42.6,43.9,44.5,44.1,45.2,46.0,45.4,44.8,45.9,47.1,46.6,47.8,48.4,47.9,47.2,48.6,49.3,48.8,49.9,50.6,49.8,50.9,51.4,50.7,51.8,52.3,51.6,52.1,52.6,51.9,52.4,52.7,52.2,52.5,52.8];
+    const reading = cleanReading({ ticker: "EXMPL", company_or_asset: "Example Corp (fictional)", timeframe: "4M daily", chart_type: "candlestick", current_price: 52.8,
+      price_points: closes.map((c, i) => ({ label: i === 0 ? "Jul 28" : i === closes.length - 1 ? "Nov 20" : "", close: c })),
+      visible_indicators: ["SMA 50", "Volume"], support_levels: [49.8], resistance_levels: [53.0], patterns: ["higher lows", "ascending triangle"],
+      volume_observation: "Volume fading as price presses into 53", reading_notes: "Fictional example data for illustration." });
+    const techChart = analyze(closes, "Screenshot (approximate)");
+    render({ reading, techChart, techMarket: null, news: [], newsNote: "Example: news appears here when your Alpha Vantage plan includes it.", marketNote: "example — real data appears here for a visible ticker",
+      lastClose: null, example: true,
+      verdict: cleanVerdict({ direction: "up", probability_up: 0.57, confidence: "medium", summary: "The uptrend of higher lows is intact and price is coiling under 53 resistance in an ascending triangle. Momentum is positive but RSI is close to overbought and volume is fading, so a breakout isn't confirmed yet.",
+        signals: [{ method: "Chart pattern: ascending triangle", reading: "Flat top at 53 with rising lows", direction: "bullish", weight: "medium" },
+          { method: "Trend: SMA 20/50", reading: "20-day above 50-day, both rising", direction: "bullish", weight: "high" },
+          { method: "RSI(14)", reading: "About 66, strong but near overbought", direction: "neutral", weight: "medium" },
+          { method: "Volume", reading: "Declining into resistance", direction: "bearish", weight: "low" }],
+        bull_case: "A daily close above 53 on rising volume confirms the triangle and targets roughly 56.", bear_case: "Another rejection at 53 with weak volume could send it back to 49.8 support.",
+        key_levels: "Above 53.0 confirms; a close under 49.8 invalidates.", risks: ["Breakouts on falling volume often fail", "Screenshot prices are approximate"] }, "1–4 weeks") });
+  })();
+
+  // ---------- light up capabilities ----------
+  (async () => {
+    const c = window.claude;
+    if (!c || !c.use) { say("Open this page in claude.ai to analyze charts. The example below shows what you'll get.", false); return; }
+    const [s, m] = await Promise.all([c.use("sample"), c.use("mcp")]);
+    mcp = m;
+    if (!s) { say("Claude isn't available in this view, so charts can't be analyzed here. Open the page in claude.ai.", true); return; }
+    const lim = await s.limits().catch(() => null);
+    imagesOK = !!(lim && lim.images);
+    if (!imagesOK) { say("This view can't send images to Claude. Open the page in claude.ai in Safari or the Claude app.", true); return; }
+    if (lim.images.mediaTypes && lim.images.mediaTypes.length) $("#file").accept = lim.images.mediaTypes.join(",");
+    sample = s;
+    go.disabled = !file;
+  })();
+})();
+</script>
