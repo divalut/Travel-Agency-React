@@ -143,6 +143,8 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .fact b { font-weight: 600; overflow-wrap: anywhere; }
 footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
 /* Kalshi mode */
+table.tight { font-size: 0.84rem; }
+table.tight th, table.tight td { padding: 7px 4px; }
 .numin { font: inherit; font-family: var(--font-mono); width: 8rem; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 .numin:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ticket[data-dir="skip"] { background: var(--sunk); }
@@ -234,7 +236,7 @@ footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
 
   <div id="result" class="section" aria-live="polite"></div>
 
-  <footer>Not financial advice. 15-minute crypto moves are close to random and Kalshi's prices are usually fair, so most checks should end in "skip": that's the page working, not failing. Each check uses your own Claude usage (two requests) and one Alpha Vantage call (free keys allow 25 a day). Only bet what you can afford to lose.</footer>
+  <footer>Not financial advice. 15-minute crypto moves are close to random and Kalshi's prices are usually fair, so most checks should end in "skip": that's the page working, not failing. Each check uses your own Claude usage (two requests); live prices come from Crypto.com and CoinGecko, with Alpha Vantage as a fallback. Only bet what you can afford to lose.</footer>
 </main>
 
 <script>
@@ -819,11 +821,14 @@ If this is not a prediction market screenshot, set is_prediction_market to false
     const r = st.read, n = Math.max(1, Math.round(st.contracts || 1));
     const S = st.spot ? st.spot.price : r.shown, K = r.target;
     const secsLeft = st.secsLeft, minutes = secsLeft != null ? secsLeft / 60 : null;
-    const vol = TYPICAL_VOL[r.asset] ?? 0.65;
-    const out = { n, S, K, minutes, vol, hardSkip: [], sides: [], call: "skip" };
+    const typVol = TYPICAL_VOL[r.asset] ?? 0.65, measVol = st.spot && st.spot.vol1m ? st.spot.vol1m : null;
+    // measured volatility from the last ~50 one-minute candles, kept within a sane band around the coin's typical level
+    const vol = measVol ? Math.min(typVol * 3, Math.max(typVol * 0.4, measVol)) : typVol;
+    const out = { n, S, K, minutes, vol, typVol, measVol, volSource: measVol ? "measured from the last 50 one-minute candles" : "typical level for this coin (no live candles)", hardSkip: [], sides: [], call: "skip" };
     if (!(r.qtype === "up_down" || r.qtype === "above_below")) out.hardSkip.push("This market type isn't a single above/below target, so the odds math doesn't apply.");
     if (K == null) out.hardSkip.push("Couldn't read the target price.");
     if (S == null) out.hardSkip.push("No current price (live price failed and none was readable).");
+    if (st.spot && st.spot.disagreePct != null && st.spot.disagreePct > 0.15) out.hardSkip.push(`Price sources disagree by ${st.spot.disagreePct.toFixed(2)}%, too much to trust a close call.`);
     if (r.up == null && r.down == null) out.hardSkip.push("Couldn't read Kalshi's Up/Down prices.");
     if (minutes == null) out.hardSkip.push("Couldn't tell how much time is left. Enter it below.");
     else if (secsLeft <= 0) out.hardSkip.push("This market has already closed.");
@@ -853,12 +858,16 @@ If this is not a prediction market screenshot, set is_prediction_market to false
     const data = {
       market: { platform: r.platform, title: r.title, asset: r.asset, type: r.qtype, target: r.target, rules_visible: r.rules, volume: r.volume },
       kalshi_prices_cents: { up_buy: r.up, down_buy: r.down, up_chance_shown: r.chance, spread_cents: m.spread },
-      price: { live: st.spot, shown_in_screenshot: r.shown, used: m.S },
+      price: { used: m.S, source: st.spot ? st.spot.source : "screenshot", shown_in_screenshot: r.shown,
+        all_sources: st.spot ? st.spot.sources.map((x) => ({ name: x.name, price: x.price })) : [], sources_disagree_pct: st.spot ? st.spot.disagreePct : null, source_notes: st.spot ? st.spot.notes : [st.spotNote] },
+      live_market: st.spot ? { measured_annual_vol_from_1m_candles: st.spot.vol1m && +st.spot.vol1m.toFixed(3), typical_annual_vol: m.typVol,
+        momentum_5min_pct: st.spot.mom5 != null ? +st.spot.mom5.toFixed(3) : null, momentum_15min_pct: st.spot.mom15 != null ? +st.spot.mom15.toFixed(3) : null,
+        last_15_one_minute_closes: st.spot.candles.slice(-15).map((x) => x.close) } : null,
       time: { minutes_left_now: m.minutes != null ? +m.minutes.toFixed(2) : null, countdown_in_screenshot: r.timeLeftText, screenshot_age_seconds: st.ageSecs, age_source: st.ageSource },
       recent_prices_from_chart: r.recent, chart_span_minutes: r.span,
       odds_math: {
         model: "driftless lognormal: P(up) = Phi(ln(price/target) / (vol*sqrt(minutes/525600)))",
-        typical_annual_vol_assumed: m.vol, typical_move_1sd_dollars: m.sd && +m.sd.toFixed(2), distance_in_sd: m.zDist && +m.zDist.toFixed(2),
+        annual_vol_used: +m.vol.toFixed(3), vol_source: m.volSource, typical_move_1sd_dollars: m.sd && +m.sd.toFixed(2), distance_in_sd: m.zDist && +m.zDist.toFixed(2),
         p_up_by_scenario: m.scen && m.scen.map((x) => ({ scenario: x.label, vol: +x.vol.toFixed(2), p_up: +x.pUp.toFixed(3) })),
         kalshi_implied_p_up: m.mktUp && +m.mktUp.toFixed(3), kalshi_implied_annual_vol: m.iv && +m.iv.toFixed(2), kalshi_implied_move_dollars: m.ivMove && +m.ivMove.toFixed(2),
         sides: m.sides.map((x) => ({ side: x.side, price_cents: x.price, model_win_prob: +x.q.toFixed(3), fee_total_dollars: x.fee, contracts: m.n,
@@ -873,7 +882,7 @@ If this is not a prediction market screenshot, set is_prediction_market to false
 Ground rules:
 - Short-horizon crypto moves are close to random and these markets are usually priced fairly. Skip is the right answer most of the time.
 - You may only choose bet_up or bet_down if that side passes the edge rule in the math. You may always downgrade to skip.
-- Look for reasons the math could be wrong: misread prices or target, stale screenshot, live price disagreeing with the screenshot (Kalshi settles on its own index, which can differ slightly from exchange prices), wide spread, thin volume, very little time left, unclear settlement rules, momentum in recent prices (weak evidence at this horizon), or the price sitting right on the target.
+- Look for reasons the math could be wrong: misread prices or target, stale screenshot, price sources disagreeing with each other or with the screenshot (Kalshi settles on its own index, which can differ slightly from exchange prices), wide spread, thin volume, very little time left, unclear settlement rules, momentum in recent prices (weak evidence at this horizon), or the price sitting right on the target.
 - Be concrete and brief. Talk to the user directly.
 
 DATA:
@@ -882,18 +891,85 @@ ${JSON.stringify(data)}
 Reply with only this JSON object:
 {"call": "bet_up|bet_down|skip", "confidence": "low|medium|high", "headline": "one short sentence",
  "reasons": ["2-4 short reasons for the call"],
- "checks": [{"name": "Prices read correctly", "status": "pass|warn|fail", "detail": "short"}, {"name": "Time left", ...}, {"name": "Live price vs screenshot", ...}, {"name": "Edge after fees", ...}, {"name": "Spread and liquidity", ...}, {"name": "Momentum", ...}, {"name": "Settlement rules", ...}],
+ "checks": [{"name": "Prices read correctly", "status": "pass|warn|fail", "detail": "short"}, {"name": "Time left", ...}, {"name": "Live price sources agree", ...}, {"name": "Volatility right now", ...}, {"name": "Edge after fees", ...}, {"name": "Spread and liquidity", ...}, {"name": "Momentum", ...}, {"name": "Settlement rules", ...}],
  "what_would_change_it": "one sentence"}`;
   }
 
-  async function fetchSpot(asset, signal) {
-    if (!mcp) throw { code: "capability_disabled" };
+  const CG_IDS = { BTC: "bitcoin", ETH: "ethereum", SOL: "solana", XRP: "ripple", DOGE: "dogecoin", ADA: "cardano", BNB: "binancecoin", AVAX: "avalanche-2", LTC: "litecoin", LINK: "chainlink", BCH: "bitcoin-cash", SHIB: "shiba-inu" };
+  function connErrCopy(server, e) {
+    switch (e && e.code) {
+      case "server_not_connected": return `${server} isn't connected (claude.ai Settings → Connectors)`;
+      case "needs_reauth": return `reconnect ${server} in claude.ai Settings → Connectors`;
+      case "not_in_manifest": case "approval_required": return `${server} wasn't allowed for this page`;
+      case "selection_required": return `choose which ${server} connector to use when claude.ai asks`;
+      case "server_unavailable": return `${server} didn't answer in time`;
+      case "cancelled": return "stopped";
+      default: return e && e.message && e.code === "tool_error" ? `${server}: ${String(e.message).slice(0, 120)}` : `${server} request failed`;
+    }
+  }
+  async function connPayload(server, tool, input, signal) {
+    const res = await mcp.callTool(server, tool, input, { signal, cache: false });
+    const p = res && res.payload;
+    if (!p || typeof p !== "object" || p.error || p.success === false) throw { code: "tool_error", message: String((p && ((p.error && p.error.message) || p.error || p.message)) || "no data returned") };
+    return p;
+  }
+  async function fetchAV(asset, signal) {
     const p = await avCall(mcp, "CURRENCY_EXCHANGE_RATE", { from_currency: asset, to_currency: "USD", datatype: "json" }, signal);
     const q = p && p["Realtime Currency Exchange Rate"];
     const price = q && num(q["5. Exchange Rate"]);
     if (!price) throw { code: "av_error", message: `No live price found for ${asset}.` };
     const ts = q["6. Last Refreshed"] ? Date.parse(String(q["6. Last Refreshed"]).replace(" ", "T") + "Z") : NaN;
-    return { price, bid: num(q["8. Bid Price"]), ask: num(q["9. Ask Price"]), at: isFinite(ts) ? ts : Date.now(), fetchedAt: Date.now() };
+    return { name: "Alpha Vantage", price, at: isFinite(ts) ? ts : Date.now() };
+  }
+  // Live price from every connector we have, plus measured volatility and momentum from 1-minute candles
+  async function fetchMarket(asset, signal) {
+    if (!mcp) throw { code: "capability_disabled" };
+    const m = { sources: [], notes: [], candles: [], vol1m: null, mom5: null, mom15: null, fetchedAt: Date.now() };
+    const cdcBranch = (async () => {
+      let inst = null;
+      for (const i of [`${asset}_USD`, `${asset}_USDT`]) {
+        try {
+          const t = await connPayload("Crypto.com", "get_ticker", { instrument_name: i }, signal);
+          const bid = num(t.best_bid), ask = num(t.best_ask), last = num(t.last);
+          const price = bid && ask ? (bid + ask) / 2 : last;
+          if (price) { inst = i; m.sources.push({ name: `Crypto.com ${i.replace("_", "/")}`, price, bid, ask, at: Date.parse(t.timestamp) || Date.now() }); break; }
+        } catch (e) { if (signal && signal.aborted) throw { code: "cancelled" }; m.cdcErr = connErrCopy("Crypto.com", e); }
+      }
+      if (!inst) { m.notes.push(m.cdcErr || "Crypto.com has no price for this coin"); return; }
+      try {
+        const c = await connPayload("Crypto.com", "get_candlestick", { instrument_name: inst, timeframe: "1m" }, signal);
+        const rows = (Array.isArray(c.data) ? c.data : []).map((x) => ({ t: Date.parse(x.timestamp), close: num(x.close) })).filter((x) => x.close && isFinite(x.t)).sort((a, b) => a.t - b.t);
+        m.candles = rows;
+        if (rows.length >= 21) {
+          const rets = rows.slice(1).map((x, i) => Math.log(x.close / rows[i].close));
+          const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+          const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1));
+          m.vol1m = sd * Math.sqrt(MIN_PER_YEAR);
+        }
+        const last = rows.length ? rows[rows.length - 1].close : null;
+        if (rows.length > 5) m.mom5 = (last / rows[rows.length - 6].close - 1) * 100;
+        if (rows.length > 15) m.mom15 = (last / rows[rows.length - 16].close - 1) * 100;
+      } catch (e) { if (signal && signal.aborted) throw { code: "cancelled" }; m.notes.push(`1-minute candles unavailable: ${connErrCopy("Crypto.com", e)}`); }
+    })();
+    const cgBranch = (async () => {
+      const id = CG_IDS[asset]; if (!id) return;
+      try {
+        const p = await connPayload("CoinGecko", "get-coin-markets", { ids: [id] }, signal);
+        const coin = Array.isArray(p.coins) ? p.coins.find((x) => x.id === id) : null;
+        const price = coin && num(coin.currentPrice);
+        if (price) m.sources.push({ name: "CoinGecko", price, at: Date.now() });
+      } catch (e) { if (signal && signal.aborted) throw { code: "cancelled" }; m.notes.push(`CoinGecko: ${connErrCopy("CoinGecko", e)}`); }
+    })();
+    await Promise.all([cdcBranch, cgBranch]);
+    if (!m.sources.some((x) => x.name.startsWith("Crypto.com"))) {
+      try { m.sources.push(await fetchAV(asset, signal)); } catch (e) { if (signal && signal.aborted) throw { code: "cancelled" }; m.notes.push(`Alpha Vantage: ${avErrorCopy(e)}`); }
+    }
+    if (!m.sources.length) throw { code: "no_price", message: m.notes.join("; ") || "No live price available." };
+    const primary = m.sources.find((x) => x.name.startsWith("Crypto.com")) || m.sources[0];
+    m.price = primary.price; m.source = primary.name; m.at = primary.at;
+    const prices = m.sources.map((x) => x.price);
+    m.disagreePct = prices.length > 1 ? (Math.max(...prices) - Math.min(...prices)) / m.price * 100 : null;
+    return m;
   }
 
   async function runKalshi() {
@@ -917,10 +993,11 @@ Reply with only this JSON object:
       // live price
       let spot = null, spotNote = "";
       if (read.asset && mcp) {
-        step("price", "run", `Live ${read.asset} price…`);
-        try { spot = await fetchSpot(read.asset, signal); }
-        catch (e) { if (signal.aborted) throw { code: "cancelled" }; spotNote = avErrorCopy(e); }
-        step("price", spot ? "done" : "skip", spot ? `${read.asset} ${fmt(spot.price)} (as of ${new Date(spot.at).toLocaleTimeString()})` : `Live price unavailable: ${spotNote}. Using the screenshot's price.`);
+        step("price", "run", `Live ${read.asset} price and 1-minute candles…`);
+        try { spot = await fetchMarket(read.asset, signal); }
+        catch (e) { if (signal.aborted || (e && e.code === "cancelled")) throw { code: "cancelled" }; spotNote = e && e.message ? e.message : "no source answered"; }
+        step("price", spot ? "done" : "skip", spot ? [`${money(spot.price)} from ${spot.source}`, spot.vol1m ? `measured volatility ${Math.round(spot.vol1m * 100)}%/yr` : "volatility not measured",
+          spot.disagreePct != null ? `sources agree within ${spot.disagreePct.toFixed(3)}%` : null].filter(Boolean).join(" · ") : `Live price unavailable: ${spotNote}. Using the screenshot's price.`);
       } else step("price", "skip", read.asset ? "Alpha Vantage isn't available in this view. Using the screenshot's price." : "No asset read.");
 
       kState = { read, spot, spotNote, ageSecs, ageSource, secsLeft, setAt: Date.now(), contracts: +$("#contracts").value || 10, review: null, reviewState: "running", example: false };
@@ -1014,7 +1091,7 @@ Reply with only this JSON object:
     // ---- the numbers ----
     if (m.sides.length) {
       out.append(h("section", { class: "panel" }, h("h2", { text: "The numbers" }),
-        h("div", { class: "tablewrap" }, h("table", {},
+        h("div", { class: "tablewrap" }, h("table", { class: "tight" },
           h("thead", {}, h("tr", {}, ["Side", "Price", "Win %", "Profit", "If calm", "If wild"].map((t) => h("th", { text: t })))),
           h("tbody", {}, m.sides.map((x) => h("tr", {},
             h("td", {}, h("b", { text: x.side === "up" ? "Up" : "Down" })), h("td", { class: "v", text: `${x.price}¢` }), h("td", { class: "v", text: `${Math.round(x.q * 100)}%` }),
@@ -1031,15 +1108,19 @@ Reply with only this JSON object:
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Distance" }), h("b", { class: "num", text: m.S != null && r.target != null ? `${m.S - r.target >= 0 ? "+" : "−"}${money(Math.abs(m.S - r.target))}` : "—" })),
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Typical move in time left" }), h("b", { class: "num", text: m.sd ? `±${money(m.sd)}` : "—" })),
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Move Kalshi is pricing" }), h("b", { class: "num", text: m.ivMove ? `±${money(m.ivMove)}` : "—" })),
-        st.spot && r.shown ? h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Screenshot price" }), h("b", { class: "num", text: money(r.shown) })) : null),
+        st.spot && r.shown ? h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Screenshot price" }), h("b", { class: "num", text: money(r.shown) })) : null,
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Volatility used" }), h("b", { class: "num", text: `${Math.round(m.vol * 100)}%/yr` }), h("span", { class: "muted", style: "font-size:0.78rem", text: m.measVol ? `measured · typical ${Math.round(m.typVol * 100)}%` : "typical (not measured)" })),
+        st.spot && (st.spot.mom5 != null || st.spot.mom15 != null) ? h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Momentum 5 / 15 min" }), h("b", { class: "num", text: `${sgn(st.spot.mom5, 2)}% / ${sgn(st.spot.mom15, 2)}%` })) : null),
+      st.spot && st.spot.candles.length >= 2 ? reconChart({ price_points: st.spot.candles.map((c, i, a) => ({ label: i === 0 ? new Date(c.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : i === a.length - 1 ? "now" : "", close: c.close })), support: [], resistance: [], target: r.target }) : null,
+      st.spot ? h("ul", { class: "plain", style: "font-size:0.88rem" }, st.spot.sources.map((x) => h("li", {}, `${x.name}: `, h("b", { class: "num", text: money(x.price) }))), st.spot.notes.map((x) => h("li", { class: "muted", text: x }))) : null,
       h("p", { class: "muted", style: "font-size:0.88rem", text: [
-        st.spot ? `Live price from Alpha Vantage as of ${new Date(st.spot.at).toLocaleTimeString()}. Kalshi settles on its own index, which can differ slightly.` : `Live price: ${st.spotNote || "not fetched"}.`,
+        st.spot ? `Live price from ${st.spot.source} as of ${new Date(st.spot.at).toLocaleTimeString()}${st.spot.disagreePct != null ? `; sources agree within ${st.spot.disagreePct.toFixed(3)}%` : ""}. Kalshi settles on its own index, which can differ slightly.` : `Live price: ${st.spotNote || "not fetched"}.`,
         `Screenshot age: ${Math.round(st.ageSecs / 60)} min (from ${st.ageSource}).`,
         m.zDist != null ? `The price is ${Math.abs(m.zDist).toFixed(2)} typical moves ${m.zDist >= 0 ? "above" : "below"} the target.` : ""].join(" ") }),
       h("div", { class: "ctrls" },
         h("label", { for: "k-left" }, "Minutes left now", h("input", { type: "number", id: "k-left", class: "numin", min: "0", step: "0.5", inputmode: "decimal", value: secsLeftNow() != null ? Math.max(0, secsLeftNow() / 60).toFixed(1) : "" })),
         h("label", { for: "k-n" }, "Contracts", h("input", { type: "number", id: "k-n", class: "numin", min: "1", step: "1", inputmode: "numeric", value: String(m.n) })),
-        st.example ? null : h("button", { class: "ghost", id: "k-refresh", type: "button", text: "Refresh live price" })),
+        st.example ? null : h("button", { class: "ghost", id: "k-refresh", type: "button", text: "Refresh live data" })),
       h("p", { class: "muted", id: "k-msg", style: "font-size:0.85rem", hidden: "" })));
 
     // ---- what Claude read ----
@@ -1062,8 +1143,8 @@ Reply with only this JSON object:
     nIn.addEventListener("change", () => { const v = num(nIn.value); if (v != null && v >= 1) { st.contracts = Math.round(v); $("#contracts").value = String(st.contracts); renderK(); } });
     if (refresh) refresh.addEventListener("click", async () => {
       refresh.disabled = true; const msg = $("#k-msg");
-      try { st.spot = await fetchSpot(r.asset, undefined); st.spotNote = ""; if (st.reviewState === "done") st.reviewState = "stale"; renderK(); }
-      catch (e) { msg.hidden = false; msg.textContent = `Couldn't refresh: ${avErrorCopy(e)}`; refresh.disabled = false; }
+      try { st.spot = await fetchMarket(r.asset, undefined); st.spotNote = ""; if (st.reviewState === "done") st.reviewState = "stale"; renderK(); }
+      catch (e) { msg.hidden = false; msg.textContent = `Couldn't refresh: ${(e && e.message) || "no source answered"}`; refresh.disabled = false; }
     });
     if (st.reviewState === "stale") {
       const note = h("p", { class: "muted", text: "Price refreshed: the math above is updated, but Claude's review was for the earlier price. Run a new check for a fresh review." });
@@ -1076,12 +1157,14 @@ Reply with only this JSON object:
     kState = { example: true, read: cleanK({ platform: "Kalshi", asset: "BTC", market_title: "Bitcoin price up or down in 15 minutes (example)", question_type: "up_down",
         target_price: 61000, target_label: "Price to beat", current_price_shown: 61062, time_left: "8:30", status_bar_time: null,
         up_price_cents: 71, down_price_cents: 31, up_chance_percent: 70, volume: "$48,200", recent_prices: recent, chart_span_minutes: 7, notes: "Fictional example." }),
-      spot: { price: 61062, at: Date.now(), fetchedAt: Date.now() }, ageSecs: 0, ageSource: "example", secsLeft: 510, setAt: Date.now(), contracts: 10, reviewState: "done" };
+      spot: { price: 61062, source: "Crypto.com BTC/USD", at: Date.now(), fetchedAt: Date.now(), vol1m: 0.38, mom5: 0.05, mom15: 0.11, disagreePct: 0.012, notes: [],
+        sources: [{ name: "Crypto.com BTC/USD", price: 61062 }, { name: "CoinGecko", price: 61055 }],
+        candles: recent.concat([61058, 61064, 61060, 61066, 61070, 61062]).map((c, i, a) => ({ t: Date.now() - (a.length - 1 - i) * 60000, close: c })) }, ageSecs: 0, ageSource: "example", secsLeft: 510, setAt: Date.now(), contracts: 10, reviewState: "done" };
     const m = computeK(kState);
-    kState.review = cleanReview({ call: m.call, confidence: "low", headline: "BTC is $62 above the target with 8½ minutes left, and Kalshi's 71¢ for Up is close to the math. There's no edge worth paying fees for.",
-      reasons: ["Math puts Up at about the same chance Kalshi does.", "After fees neither side clears the 3¢ bar.", "The recent climb is weak evidence over 8 minutes."],
+    kState.review = cleanReview({ call: m.call, confidence: "low", headline: "BTC is $62 above the target with 8½ minutes left. Up looks slightly underpriced, but not by enough to beat fees safely.",
+      reasons: ["Math puts Up near 75% against Kalshi's 70%, worth only about +2¢ per contract after fees.", "That's under the 3¢ bar, and it turns into a loss if BTC gets wilder.", "The recent climb is weak evidence over 8 minutes."],
       checks: [{ name: "Prices read correctly", status: "pass", detail: "Up 71¢, Down 31¢, target $61,000." }, { name: "Time left", status: "pass", detail: "8:30 is enough time to place an order." },
-        { name: "Live price vs screenshot", status: "pass", detail: "They match." }, { name: "Edge after fees", status: "fail", detail: "Neither side is above +3¢." },
+        { name: "Live price sources agree", status: "pass", detail: "Crypto.com and CoinGecko are $7 apart." }, { name: "Volatility right now", status: "pass", detail: "Measured 38%/yr, a bit calmer than usual." }, { name: "Edge after fees", status: "fail", detail: "Up is about +2¢; the bar is +3¢." },
         { name: "Spread and liquidity", status: "pass", detail: "2¢ spread, decent volume." }, { name: "Momentum", status: "warn", detail: "Up-drift over 7 minutes, but that rarely persists." }],
       what_would_change_it: "Up dropping to about 62¢ or less while BTC stays $60+ above the target." }, m);
     renderK();
