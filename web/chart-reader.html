@@ -206,6 +206,13 @@ table.tight th, table.tight td { padding: 7px 4px; }
       <label class="eyebrow" for="contracts">Contracts you'd buy</label>
       <input type="number" id="contracts" class="numin" min="1" max="10000" step="1" value="10" inputmode="numeric">
       <p class="muted" style="font-size:0.85rem">Used to estimate Kalshi's trading fee, which is rounded up per order and costs more per contract on small orders.</p>
+      <span class="eyebrow" id="rule-l">How picky to be</span>
+      <div class="seg" role="radiogroup" aria-labelledby="rule-l">
+        <input type="radio" name="rule" id="rule-s" value="strict"><label for="rule-s">Strict</label>
+        <input type="radio" name="rule" id="rule-n" value="standard" checked><label for="rule-n">Standard</label>
+        <input type="radio" name="rule" id="rule-l2" value="loose"><label for="rule-l2">Loose</label>
+      </div>
+      <p class="muted" id="rule-note" style="font-size:0.85rem"></p>
     </div>
 
     <div class="section" id="stock-opts" hidden>
@@ -735,7 +742,13 @@ Reply with only this JSON object:
   // =====================================================================
   const MIN_PER_YEAR = 525600;
   const TYPICAL_VOL = { BTC: 0.45, ETH: 0.6, SOL: 0.75, XRP: 0.7, DOGE: 0.85 }; // annualized, rough typical levels
-  const EDGE_MIN = 0.03;   // need at least 3¢ expected profit per contract after fees
+  // Edge rules: minimum expected profit per contract after fees, and the volatility band a bet must survive
+  const RULES = {
+    strict: { min: 0.03, lo: 0.6, hi: 1.6, stress: true, text: "Bet only with at least 3¢ profit per contract after fees, and only if it still makes money with BTC moving 40% less or 60% more than now. Very few bets." },
+    standard: { min: 0.02, lo: 0.8, hi: 1.25, stress: true, text: "Bet with at least 2¢ profit per contract after fees, if it still makes money with BTC moving 20% less or 25% more than now." },
+    loose: { min: 0.01, lo: 0.8, hi: 1.25, stress: false, text: "Bet with at least 1¢ profit per contract after fees, no stress test. More bets, thinner edge: some will just be noise." },
+  };
+  function ruleKey() { const el = document.querySelector('input[name="rule"]:checked'); return el && RULES[el.value] ? el.value : "standard"; }
   const MIN_SECONDS = 60;  // too close to the close to act on
   let countdownTimer = null, kState = null, hasResult = false;
 
@@ -762,7 +775,9 @@ Reply with only this JSON object:
   // Kalshi's published taker fee: round up(0.07 × contracts × price × (1 − price)), in dollars
   function kalshiFee(price, n) { return Math.ceil(0.07 * n * price * (1 - price) * 100 - 1e-9) / 100; }
   function evPerContract(q, price, n) { return q - price - kalshiFee(price, n) / n; }
-  function maxEntry(q, n) { let best = null; for (let c = 1; c <= 99; c++) if (evPerContract(q, c / 100, n) >= EDGE_MIN) best = c; return best; }
+  function passes(qs, c, n, R) { const evs = qs.map((q) => evPerContract(q, c, n)); return evs[1] >= R.min && (!R.stress || Math.min(...evs) > 0); }
+  // Highest price (¢) at which this side would pass the rule
+  function maxEntry(qs, n, R) { let best = null; for (let c = 1; c <= 99; c++) if (passes(qs, c / 100, n, R)) best = c; return best; }
 
   function parseDuration(txt) {
     if (txt == null) return null; const t = String(txt).trim().toLowerCase();
@@ -831,11 +846,12 @@ If this is not a prediction market screenshot, set is_prediction_market to false
   function computeK(st) {
     const r = st.read, n = Math.max(1, Math.round(st.contracts || 1));
     const S = st.spot ? st.spot.price : r.shown, K = r.target;
-    const secsLeft = st.secsLeft, minutes = secsLeft != null ? secsLeft / 60 : null;
+    const secsLeft = st.closeAt != null ? (st.closeAt - Date.now()) / 1000 : st.secsLeft, minutes = secsLeft != null ? secsLeft / 60 : null;
     const typVol = TYPICAL_VOL[r.asset] ?? 0.65, measVol = st.spot && st.spot.vol1m ? st.spot.vol1m : null;
     // measured volatility from the last ~50 one-minute candles, kept within a sane band around the coin's typical level
     const vol = measVol ? Math.min(typVol * 3, Math.max(typVol * 0.4, measVol)) : typVol;
-    const out = { n, S, K, minutes, vol, typVol, measVol, volSource: measVol ? "measured from the last 50 one-minute candles" : "typical level for this coin (no live candles)", hardSkip: [], sides: [], call: "skip" };
+    const ruleName = st.rule || "standard", R = RULES[ruleName];
+    const out = { n, S, K, minutes, vol, rule: R, ruleName, typVol, measVol, volSource: measVol ? "measured from the last 50 one-minute candles" : "typical level for this coin (no live candles)", hardSkip: [], sides: [], call: "skip" };
     if (!(r.qtype === "up_down" || r.qtype === "above_below")) out.hardSkip.push("This market type isn't a single above/below target, so the odds math doesn't apply.");
     if (K == null) out.hardSkip.push("Couldn't read the target price.");
     if (S == null) out.hardSkip.push("No current price (live price failed and none was readable).");
@@ -845,7 +861,7 @@ If this is not a prediction market screenshot, set is_prediction_market to false
     else if (secsLeft <= 0) out.hardSkip.push("This market has already closed.");
     else if (secsLeft < MIN_SECONDS) out.hardSkip.push("Under a minute left: too little time to place an order at these prices.");
     if (S != null && K != null && minutes != null && minutes > 0) {
-      const scen = [["Calm market", vol * 0.6], ["Typical", vol], ["Wild market", vol * 1.6]].map(([label, v]) => ({ label, vol: v, pUp: pAbove(S, K, minutes, v) }));
+      const scen = [["Calmer", vol * R.lo], ["As measured", vol], ["Wilder", vol * R.hi]].map(([label, v]) => ({ label, vol: v, pUp: pAbove(S, K, minutes, v) }));
       out.scen = scen; out.pUp = scen[1].pUp;
       out.sd = S * vol * Math.sqrt(minutes / MIN_PER_YEAR);      // typical 1-sigma move in dollars over the time left
       out.zDist = out.sd ? (S - K) / out.sd : null;
@@ -856,7 +872,7 @@ If this is not a prediction market screenshot, set is_prediction_market to false
       for (const [side, price, qs] of [["up", r.up, scen.map((x) => x.pUp)], ["down", r.down, scen.map((x) => 1 - x.pUp)]]) {
         if (price == null) continue;
         const c = price / 100, evs = qs.map((q) => evPerContract(q, c, n));
-        out.sides.push({ side, price, assumed: side === "up" ? r.upAssumed : r.downAssumed, q: qs[1], evs, ev: evs[1], fee: kalshiFee(c, n), maxC: maxEntry(qs[1], n), robust: evs[1] >= EDGE_MIN && Math.min(...evs) > 0 });
+        out.sides.push({ side, price, assumed: side === "up" ? r.upAssumed : r.downAssumed, q: qs[1], evs, ev: evs[1], fee: kalshiFee(c, n), maxC: maxEntry(qs, n, R), robust: passes(qs, c, n, R) });
       }
       if (r.upBuy != null && r.downBuy != null) out.spread = r.upBuy + r.downBuy - 100;
       const best = out.sides.filter((x) => x.robust).sort((a, b) => b.ev - a.ev)[0];
@@ -885,7 +901,7 @@ If this is not a prediction market screenshot, set is_prediction_market to false
         kalshi_implied_p_up: m.mktUp && +m.mktUp.toFixed(3), kalshi_implied_annual_vol: m.iv && +m.iv.toFixed(2), kalshi_implied_move_dollars: m.ivMove && +m.ivMove.toFixed(2),
         sides: m.sides.map((x) => ({ side: x.side, price_cents: x.price, model_win_prob: +x.q.toFixed(3), fee_total_dollars: x.fee, contracts: m.n,
           ev_per_contract_cents_by_scenario: x.evs.map((e) => +(e * 100).toFixed(1)), passes_edge_rule: x.robust, max_entry_cents: x.maxC })),
-        edge_rule: `bet only if expected profit >= ${EDGE_MIN * 100} cents per contract after fees in the typical scenario AND positive in calm and wild scenarios`,
+        edge_rule: `${m.ruleName}: ${m.rule.text}`,
         math_call: m.call, hard_skip_reasons: m.hardSkip,
       },
       reading_notes: r.notes,
@@ -1010,7 +1026,7 @@ Reply with only this JSON object:
           spot.disagreePct != null ? `sources agree within ${spot.disagreePct.toFixed(3)}%` : null].filter(Boolean).join(" · ") : `Live price unavailable: ${spotNote}. Using the screenshot's price.`);
       } else step("price", "skip", read.asset ? "Alpha Vantage isn't available in this view. Using the screenshot's price." : "No asset read.");
 
-      kState = { read, spot, spotNote, ageSecs, ageSource, closeAt, closeNote: tm.note, secsLeft: closeAt != null ? (closeAt - Date.now()) / 1000 : null, contracts: +$("#contracts").value || 10, review: null, reviewState: "running", example: false };
+      kState = { read, spot, spotNote, ageSecs, ageSource, closeAt, closeNote: tm.note, secsLeft: closeAt != null ? (closeAt - Date.now()) / 1000 : null, contracts: +$("#contracts").value || 10, rule: ruleKey(), review: null, reviewState: "running", example: false };
       const m = computeK(kState);
       step("math", "done", m.call === "skip" ? (m.hardSkip[0] || "No side has enough edge after fees.") : `${m.call === "bet_up" ? "Up" : "Down"} shows +${(m.best.ev * 100).toFixed(1)}¢ per contract`);
       renderK(); hasResult = true;
@@ -1099,7 +1115,11 @@ Reply with only this JSON object:
       best ? h("p", { class: "edge" }, "Expected profit ", h("b", { text: cents(best.ev) }), ` per contract if you pay ${best.price}¢${best.assumed ? " (assumed: odds + 1¢)" : ""}, after est. fees. `,
         best.maxC != null ? h("span", {}, "Don't pay more than ", h("b", { text: `${best.maxC}¢` }), ".") : null)
         : m.hardSkip.length ? h("p", { class: "edge", text: m.hardSkip[0] })
-        : st.reviewState === "done" && rv.headline ? null : h("p", { class: "edge", text: "Neither side pays enough after fees to be worth it. Kalshi's prices look about right." }),
+        : h("div", { class: "section" },
+            st.reviewState === "done" && rv.headline ? null : h("p", { class: "edge", text: `Neither side passes the ${m.ruleName} rule at these prices.` }),
+            m.sides.length ? h("ul", { class: "plain" }, m.sides.map((x) => h("li", {},
+              h("b", { text: x.side === "up" ? "Up" : "Down" }), `: math ${Math.round(x.q * 100)}% vs ${x.price}¢ cost → `, h("b", { class: "num", text: cents(x.ev) }), " per contract. ",
+              x.maxC != null ? h("span", {}, "Becomes a bet at ", h("b", { text: `${x.maxC}¢ or less` }), ".") : "Not a bet at any price right now."))) : null),
       rv && rv.overridden ? h("p", { class: "muted", text: "Claude suggested a bet, but the math shows no real edge after fees, so this stays a skip." }) : null,
       m.pUp != null && m.mktUp != null ? h("div", { class: "meter" },
         h("div", { class: "ticket-top" }, h("span", {}, "Chance it finishes above target: ", h("b", { class: "num", text: `${Math.round(m.pUp * 100)}%` }), " (math)"), h("span", { class: "muted num", text: `Kalshi odds: ${Math.round(m.mktUp * 100)}%` })),
@@ -1122,12 +1142,12 @@ Reply with only this JSON object:
     if (m.sides.length) {
       out.append(h("section", { class: "panel" }, h("h2", { text: "The numbers" }),
         h("div", { class: "tablewrap" }, h("table", { class: "tight" },
-          h("thead", {}, h("tr", {}, ["Side", "Price", "Win %", "Profit", "If calm", "If wild"].map((t) => h("th", { text: t })))),
+          h("thead", {}, h("tr", {}, ["Side", "Price", "Win %", "Profit", "Calmer", "Wilder"].map((t) => h("th", { text: t })))),
           h("tbody", {}, m.sides.map((x) => h("tr", {},
             h("td", {}, h("b", { text: x.side === "up" ? "Up" : "Down" })), h("td", { class: "v", text: `${x.price}¢${x.assumed ? "*" : ""}` }), h("td", { class: "v", text: `${Math.round(x.q * 100)}%` }),
-            h("td", { class: "v" }, h("span", { class: `tag ${x.evs[1] >= EDGE_MIN ? "bullish" : x.evs[1] < 0 ? "bearish" : "neutral"}`, text: cents(x.evs[1]) })),
+            h("td", { class: "v" }, h("span", { class: `tag ${x.evs[1] >= m.rule.min ? "bullish" : x.evs[1] < 0 ? "bearish" : "neutral"}`, text: cents(x.evs[1]) })),
             h("td", { class: "v", text: cents(x.evs[0]) }), h("td", { class: "v", text: cents(x.evs[2]) })))))),
-        h("p", { class: "muted", style: "font-size:0.85rem", text: `Profit per contract is after Kalshi's estimated taker fee (${m.n} contract${m.n > 1 ? "s" : ""}: ${m.sides.map((x) => `${x.side} ${money(x.fee)}`).join(", ")}). A side only counts if it makes at least ${EDGE_MIN * 100}¢ in the typical case and still makes money in a calmer and a wilder market.${m.sides.some((x) => x.assumed) ? " * Buy price wasn't in the screenshot, so the cost is Kalshi's odds plus 1¢. Check the real price on the buy button." : ""}` })));
+        h("p", { class: "muted", style: "font-size:0.85rem", text: `Profit per contract is after Kalshi's estimated taker fee (${m.n} contract${m.n > 1 ? "s" : ""}: ${m.sides.map((x) => `${x.side} ${money(x.fee)}`).join(", ")}). Rule (${m.ruleName}): ${m.rule.text}${m.sides.some((x) => x.assumed) ? " * Buy price wasn't in the screenshot, so the cost is Kalshi's odds plus 1¢. Check the real price on the buy button." : ""}` })));
     }
 
     // ---- price vs target ----
@@ -1179,7 +1199,7 @@ Reply with only this JSON object:
       catch (e) { msg.hidden = false; msg.textContent = `Couldn't refresh: ${(e && e.message) || "no source answered"}`; refresh.disabled = false; }
     });
     if (st.reviewState === "stale") {
-      const note = h("p", { class: "muted", text: "Price refreshed: the math above is updated, but Claude's review was for the earlier price. Run a new check for a fresh review." });
+      const note = h("p", { class: "muted", text: "The math above is updated for the new price or setting, but Claude's review was written before the change. Run a new check for a fresh review." });
       ticket.append(note);
     }
   }
@@ -1191,12 +1211,12 @@ Reply with only this JSON object:
         up_percent: 70, down_percent: 30, up_buy_cents: 71, down_buy_cents: 31, volume: "$48,200", recent_prices: recent, chart_span_minutes: 7, notes: "Fictional example." }),
       spot: { price: 61062, source: "Crypto.com BTC/USD", at: Date.now(), fetchedAt: Date.now(), vol1m: 0.38, mom5: 0.05, mom15: 0.11, disagreePct: 0.012, notes: [],
         sources: [{ name: "Crypto.com BTC/USD", price: 61062 }, { name: "CoinGecko", price: 61055 }],
-        candles: recent.concat([61058, 61064, 61060, 61066, 61070, 61062]).map((c, i, a) => ({ t: Date.now() - (a.length - 1 - i) * 60000, close: c })) }, ageSecs: 0, ageSource: "example", closeAt: Date.now() + 510000, closeNote: "", contracts: 10, reviewState: "done" };
+        candles: recent.concat([61058, 61064, 61060, 61066, 61070, 61062]).map((c, i, a) => ({ t: Date.now() - (a.length - 1 - i) * 60000, close: c })) }, ageSecs: 0, ageSource: "example", closeAt: Date.now() + 510000, closeNote: "", contracts: 10, rule: ruleKey(), reviewState: "done" };
     const m = computeK(kState);
-    kState.review = cleanReview({ call: m.call, confidence: "low", headline: "BTC is $62 above the target with 8½ minutes left. Up looks slightly underpriced, but not by enough to beat fees safely.",
-      reasons: ["Math puts Up near 75% against Kalshi's 70% odds, worth only about +2¢ per contract at 71¢ after fees.", "That's under the 3¢ bar, and it turns into a loss if BTC gets wilder.", "The recent climb is weak evidence over 8 minutes."],
+    kState.review = cleanReview({ call: m.call, confidence: "low", headline: m.call === "bet_up" ? "BTC is $62 above the target with 8½ minutes left and Up is priced a little low. Thin edge: only the Loose setting takes it." : "BTC is $62 above the target with 8½ minutes left. Up looks slightly underpriced, but not by enough to beat fees safely.",
+      reasons: ["Math puts Up near 75% against Kalshi's 70% odds, about +2¢ per contract at 71¢ after fees.", "If BTC gets a bit wilder that turns into a loss, so it doesn't pass at 71¢. A cheaper fill would.", "The recent climb is weak evidence over 8 minutes."],
       checks: [{ name: "Prices read correctly", status: "pass", detail: "Odds 70% / 30%, buy 71¢ / 31¢, target $61,000." }, { name: "Time left", status: "pass", detail: "8:30 is enough time to place an order." },
-        { name: "Live price sources agree", status: "pass", detail: "Crypto.com and CoinGecko are $7 apart." }, { name: "Volatility right now", status: "pass", detail: "Measured 38%/yr, a bit calmer than usual." }, { name: "Edge after fees", status: "fail", detail: "Up is about +2¢; the bar is +3¢." },
+        { name: "Live price sources agree", status: "pass", detail: "Crypto.com and CoinGecko are $7 apart." }, { name: "Volatility right now", status: "pass", detail: "Measured 38%/yr, a bit calmer than usual." }, { name: "Edge after fees", status: "warn", detail: "Up is about +2¢, but not if volatility rises." },
         { name: "Spread and liquidity", status: "pass", detail: "2¢ spread, decent volume." }, { name: "Momentum", status: "warn", detail: "Up-drift over 7 minutes, but that rarely persists." }],
       what_would_change_it: "Up dropping to about 62¢ or less while BTC stays $60+ above the target." }, m);
     renderK();
@@ -1213,6 +1233,14 @@ Reply with only this JSON object:
     if (!hasResult) (md === "kalshi" ? kalshiExample : stockExample)();
   }
   document.querySelectorAll('input[name="mode"]').forEach((el) => el.addEventListener("change", applyMode));
+  function applyRule() {
+    $("#rule-note").textContent = RULES[ruleKey()].text;
+    if (kState && kState.example) kalshiExample();
+    else if (kState) { kState.rule = ruleKey(); if (kState.reviewState === "done") kState.reviewState = "stale"; renderK(); }
+  }
+  try { const saved = localStorage.getItem("edge-rule"); if (saved && RULES[saved]) document.querySelector(`input[name="rule"][value="${saved}"]`).checked = true; } catch (e) {}
+  document.querySelectorAll('input[name="rule"]').forEach((el) => el.addEventListener("change", () => { try { localStorage.setItem("edge-rule", ruleKey()); } catch (e) {} applyRule(); }));
+  $("#rule-note").textContent = RULES[ruleKey()].text;
   applyMode();
 
   // ---------- light up capabilities ----------
