@@ -142,6 +142,20 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .fact { display: grid; gap: 2px; min-width: 0; }
 .fact b { font-weight: 600; overflow-wrap: anywhere; }
 footer { font-size: 0.82rem; color: var(--muted); max-width: 65ch; }
+/* Chat */
+.small { padding: 6px 12px; font-size: 0.85rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: inherit; font-size: 0.85rem; font-weight: 500; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--sunk); color: var(--ink); cursor: pointer; }
+.chat-log { display: grid; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.chat-log:empty { display: none; }
+.bubble { padding: 10px 12px; border-radius: 12px; max-width: 88%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.95rem; }
+.bubble.user { justify-self: end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; }
+.bubble.assistant { justify-self: start; background: var(--sunk); border-bottom-left-radius: 4px; }
+#chat-in { font: inherit; width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); resize: vertical; }
+#chat-in:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.attach { display: inline-block; font-weight: 600; border-radius: 10px; padding: 10px 14px; border: 1px solid var(--line); cursor: pointer; }
+.sr { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.sr:focus-visible + label, #chat-attach-wrap:focus-within label { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Kalshi mode */
 table.tight { font-size: 0.84rem; }
 table.tight th, table.tight td { padding: 7px 4px; }
@@ -242,6 +256,27 @@ table.tight th, table.tight td { padding: 7px 4px; }
   </section>
 
   <div id="result" class="section" aria-live="polite"></div>
+
+  <section class="panel" id="chat" hidden aria-labelledby="chat-h">
+    <div class="ticket-top"><h2 id="chat-h">Ask about this market</h2><button class="ghost small" id="chat-clear" type="button">Clear chat</button></div>
+    <p class="muted" id="chat-empty" style="font-size:0.88rem">Ask anything about the check above. Claude sees the same numbers, can re-run the odds with different ones, and can pull the latest price.</p>
+    <div class="chips" id="chat-suggest">
+      <button type="button" class="chip">Why this call?</button>
+      <button type="button" class="chip">What price should I wait for?</button>
+      <button type="button" class="chip">What if the price drops $50?</button>
+      <button type="button" class="chip">Has anything changed since the check?</button>
+    </div>
+    <div class="chat-log" id="chat-log"></div>
+    <label for="chat-in" class="eyebrow">Your question</label>
+    <textarea id="chat-in" rows="2" placeholder="e.g. What if there were only 4 minutes left?"></textarea>
+    <div class="actions">
+      <button class="primary" id="chat-send" type="button" disabled>Send</button>
+      <button class="ghost" id="chat-stop" type="button" hidden>Stop</button>
+      <span id="chat-attach-wrap" hidden><label class="ghost attach" for="chat-file">Attach screenshot</label><input type="file" id="chat-file" class="sr" accept="image/jpeg,image/png,image/webp,image/gif"></span>
+      <span class="muted" id="chat-attach-name" style="font-size:0.85rem"></span>
+    </div>
+    <p class="notice bad" id="chat-msg" hidden></p>
+  </section>
 
   <footer>Not financial advice. 15-minute crypto moves are close to random and Kalshi's prices are usually fair, so most checks should end in "skip": that's the page working, not failing. Each check uses your own Claude usage (two requests); live prices come from Crypto.com and CoinGecko, with Alpha Vantage as a fallback. Only bet what you can afford to lose.</footer>
 </main>
@@ -668,6 +703,7 @@ Reply with only this JSON object:
   }
 
   function render(d) {
+    lastStock = d;
     const { reading: r, verdict: v } = d;
     const name = r.ticker || r.company || "Unknown asset";
     const arrow = { up: "▲ Up", down: "▼ Down", sideways: "► Sideways" }[v.direction];
@@ -1224,6 +1260,132 @@ Reply with only this JSON object:
     renderK();
   }
 
+  // =====================================================================
+  // Chat about the current analysis
+  // =====================================================================
+  let chatSample = null, chatToolsOK = false, chatImagesOK = false, chatCtl = null, chatImg = null, lastStock = null;
+  const chatTurns = []; // {role, content}
+
+  function chatContext() {
+    if (mode() === "kalshi" && kState) {
+      const m = computeK(kState), r = kState.read;
+      return {
+        view: kState.example ? "Kalshi checker, showing a FICTIONAL example (the user hasn't run a real check yet)" : "Kalshi checker, the user's latest check",
+        market: { title: r.title, asset: r.asset, target: r.target, odds_pct: { up: r.upPct, down: r.downPct }, buy_price_pct: { up: r.upBuy, down: r.downBuy }, cost_used_pct: { up: r.up, down: r.down } },
+        price_now: m.S, price_source: kState.spot ? kState.spot.source : "screenshot", minutes_left: m.minutes != null ? +m.minutes.toFixed(2) : null,
+        volatility_annual_pct: Math.round(m.vol * 100), volatility_source: m.volSource,
+        momentum_pct: kState.spot ? { last_5_min: kState.spot.mom5, last_15_min: kState.spot.mom15 } : null,
+        math_p_up_pct: m.pUp != null ? +(m.pUp * 100).toFixed(1) : null, kalshi_p_up_pct: m.mktUp != null ? +(m.mktUp * 100).toFixed(1) : null,
+        rule: { name: m.ruleName, text: m.rule.text }, contracts: m.n,
+        sides: m.sides.map((x) => ({ side: x.side, cost_pct: x.price, math_win_pct: +(x.q * 100).toFixed(1), expected_profit_usd: +(x.ev * m.n).toFixed(2),
+          profit_if_calmer_usd: +(x.evs[0] * m.n).toFixed(2), profit_if_wilder_usd: +(x.evs[2] * m.n).toFixed(2), passes_rule: x.robust, becomes_bet_at_pct: x.maxC })),
+        page_call: kState.reviewState === "done" && kState.review ? kState.review.call : m.call, hard_skip_reasons: m.hardSkip,
+        claude_review: kState.review ? { headline: kState.review.headline, reasons: kState.review.reasons, checks: kState.review.checks } : null,
+      };
+    }
+    if (mode() === "stock" && lastStock) {
+      const d = lastStock, v = d.verdict;
+      return { view: d.example ? "Stock chart reader, FICTIONAL example" : "Stock chart reader, the user's latest analysis",
+        asset: d.reading.ticker || d.reading.company, timeframe: d.reading.timeframe, verdict: { direction: v.direction, p_up_pct: Math.round(v.p * 100), confidence: v.confidence, horizon: v.horizon, summary: v.summary },
+        signals: v.signals, technicals_screenshot: d.techChart.signals, technicals_real: d.techMarket ? d.techMarket.signals : null, steps: v.steps };
+    }
+    return { view: "Nothing analyzed yet" };
+  }
+
+  function chatTools() {
+    if (!chatToolsOK) return undefined;
+    const tools = [];
+    if (mode() === "kalshi" && kState) {
+      tools.push({
+        name: "what_if",
+        description: "Re-run the page's odds math for the current Kalshi market with some numbers changed. Returns the math chance of Up, profit in dollars for each side, whether each side passes the user's rule, and the price at which it becomes a bet. Use for any 'what if' question.",
+        inputSchema: { type: "object", properties: {
+          price: { type: "number", description: "Coin price to assume, in USD" }, target: { type: "number", description: "Target price, USD" },
+          minutes_left: { type: "number" }, up_cost_pct: { type: "number", description: "Cost of Up, 1-99" }, down_cost_pct: { type: "number", description: "Cost of Down, 1-99" },
+          contracts: { type: "number" }, volatility_annual_pct: { type: "number", description: "e.g. 45 for 45%/yr" }, rule: { type: "string", enum: ["strict", "standard", "loose"] } } },
+        execute(input) {
+          const st = JSON.parse(JSON.stringify({ ...kState, review: null }));
+          const n = (v) => (typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN);
+          if (isFinite(n(input.price))) st.spot = { ...(st.spot || {}), price: n(input.price), sources: [], notes: [], candles: [] };
+          if (isFinite(n(input.target))) st.read.target = n(input.target);
+          if (isFinite(n(input.minutes_left))) st.closeAt = Date.now() + n(input.minutes_left) * 60000;
+          if (isFinite(n(input.up_cost_pct))) { st.read.up = Math.round(n(input.up_cost_pct)); st.read.upAssumed = false; }
+          if (isFinite(n(input.down_cost_pct))) { st.read.down = Math.round(n(input.down_cost_pct)); st.read.downAssumed = false; }
+          if (isFinite(n(input.contracts))) st.contracts = Math.max(1, Math.round(n(input.contracts)));
+          if (isFinite(n(input.volatility_annual_pct))) st.spot = { ...(st.spot || { price: st.read.shown, sources: [], notes: [], candles: [] }), vol1m: n(input.volatility_annual_pct) / 100 };
+          if (RULES[input.rule]) st.rule = input.rule;
+          const m = computeK(st);
+          return { math_p_up_pct: m.pUp != null ? +(m.pUp * 100).toFixed(1) : null, volatility_used_pct: Math.round(m.vol * 100), call: m.call, hard_skip_reasons: m.hardSkip,
+            sides: m.sides.map((x) => ({ side: x.side, cost_pct: x.price, math_win_pct: +(x.q * 100).toFixed(1), expected_profit_usd: +(x.ev * m.n).toFixed(2), passes_rule: x.robust, becomes_bet_at_pct: x.maxC })) };
+        },
+      });
+      if (mcp && !kState.example && kState.read.asset) tools.push({
+        name: "get_live_market",
+        description: "Fetch the latest live price, measured volatility and 5/15-minute momentum for the market's coin from Crypto.com and CoinGecko. Use when the user asks what the price is now or whether anything changed.",
+        async execute(_input, ctx) {
+          const m = await fetchMarket(kState.read.asset, ctx.signal);
+          return { price: m.price, source: m.source, sources: m.sources.map((x) => ({ name: x.name, price: x.price })), volatility_annual_pct: m.vol1m ? Math.round(m.vol1m * 100) : null, momentum_5_min_pct: m.mom5, momentum_15_min_pct: m.mom15, fetched_at: new Date(m.fetchedAt).toLocaleTimeString() };
+        },
+      });
+    }
+    return tools.length ? tools : undefined;
+  }
+
+  const CHAT_RULES = `You are the assistant inside a page that checks short-term prediction markets (mainly Kalshi 15-minute crypto up/down markets) and stock charts. Answer the user's questions about what the page shows.
+Rules:
+- Kalshi prices are percentages (a 71% contract costs $0.71 and pays $1 if right). Write prices as %, profits in dollars for the user's contract count. Never use cents.
+- The page's math and rule decide bet or skip; explain them, and use the what_if tool to test changes instead of guessing numbers. Don't override a skip into a bet.
+- Be honest: 15-minute crypto moves are close to random, edges are small, and any single bet can lose. Never promise an outcome. Don't push the user to bet more.
+- Keep answers short and plain, a few sentences or a short list. Talk to the user directly.
+If the user attaches a screenshot, describe what you see in it and how it relates to the current check.`;
+
+  function renderChat(streamText) {
+    const log = $("#chat-log"); if (!log) return;
+    log.replaceChildren(...chatTurns.map((t) => h("div", { class: `bubble ${t.role}` }, t.content)));
+    if (streamText != null) log.append(h("div", { class: "bubble assistant", text: streamText || "Thinking…" }));
+    $("#chat-empty").hidden = chatTurns.length > 0 || streamText != null;
+    $("#chat-suggest").hidden = chatTurns.length > 0 || streamText != null;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function sendChat() {
+    const box = $("#chat-in"), text = box.value.trim();
+    if (!text || !chatSample || chatCtl) return;
+    chatTurns.push({ role: "user", content: chatImg ? `${text}\n\n[attached a screenshot]` : text });
+    box.value = ""; renderChat("");
+    chatCtl = new AbortController();
+    $("#chat-send").hidden = true; $("#chat-stop").hidden = false; $("#chat-msg").hidden = true;
+    const recent = chatTurns.slice(-12);
+    const input = [{ role: "user", content: `${CHAT_RULES}\n\nWHAT THE PAGE SHOWS RIGHT NOW:\n${JSON.stringify(chatContext())}` }, ...recent];
+    const opts = { signal: chatCtl.signal, cache: false, onText: ({ text: t }) => renderChat(t) };
+    const tools = chatTools(); if (tools) opts.tools = tools;
+    if (chatImg && chatImagesOK) opts.images = chatImg;
+    try {
+      const { text: answer } = await chatSample(input, opts);
+      chatTurns.push({ role: "assistant", content: answer });
+    } catch (e) {
+      if (e && e.text) chatTurns.push({ role: "assistant", content: e.text + (e.code === "cancelled" ? " (stopped)" : " (interrupted)") });
+      if (e && e.code !== "cancelled") { const msg = $("#chat-msg"); msg.hidden = false; msg.textContent = sampleErrorCopy(e); }
+      if (e && ["not_granted", "sampling_disabled", "not_declared", "capability_disabled"].includes(e.code)) { chatSample = null; $("#chat-send").disabled = true; }
+    } finally {
+      chatCtl = null; chatImg = null; $("#chat-attach-name").textContent = "";
+      $("#chat-send").hidden = false; $("#chat-stop").hidden = true; renderChat();
+    }
+  }
+
+  function initChat(s, lim) {
+    chatSample = s; chatToolsOK = !!(lim && lim.tools); chatImagesOK = !!(lim && lim.images);
+    $("#chat").hidden = false;
+    $("#chat-send").disabled = false;
+    $("#chat-attach-wrap").hidden = !chatImagesOK;
+  }
+  $("#chat-send").addEventListener("click", sendChat);
+  $("#chat-stop").addEventListener("click", () => chatCtl && chatCtl.abort());
+  $("#chat-in").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+  $("#chat-clear").addEventListener("click", () => { if (chatCtl) chatCtl.abort(); chatTurns.length = 0; renderChat(); });
+  $("#chat-file").addEventListener("change", (e) => { chatImg = (e.target.files && e.target.files[0]) || null; $("#chat-attach-name").textContent = chatImg ? `Attached: ${chatImg.name || "screenshot"}` : ""; });
+  document.querySelectorAll("#chat-suggest button").forEach((b) => b.addEventListener("click", () => { $("#chat-in").value = b.textContent; sendChat(); }));
+
   // ---------- mode switching ----------
   const HINTS = { kalshi: "From Photos. Include the target price, the countdown, the Up/Down prices and your phone's clock.", stock: "From Photos or Files. Best with the ticker and price axis visible." };
   function applyMode() {
@@ -1253,6 +1415,7 @@ Reply with only this JSON object:
     mcp = m;
     if (!s) { say("Claude isn't available in this view, so charts can't be analyzed here. Open the page in claude.ai.", true); return; }
     const lim = await s.limits().catch(() => null);
+    initChat(s, lim);
     imagesOK = !!(lim && lim.images);
     if (!imagesOK) { say("This view can't send images to Claude. Open the page in claude.ai in Safari or the Claude app.", true); return; }
     if (lim.images.mediaTypes && lim.images.mediaTypes.length) $("#file").accept = lim.images.mediaTypes.join(",");
