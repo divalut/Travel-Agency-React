@@ -997,11 +997,8 @@ Reply with only this JSON object:
       step("read", "done", [read.asset, read.target != null ? `target ${fmt(read.target)}` : "no target read", read.timeLeftText ? `${read.timeLeftText} left` : "no countdown read", read.upPct != null ? `Up ${read.upPct}%` : null, read.downPct != null ? `Down ${read.downPct}%` : null, read.upBuy != null || read.downBuy != null ? `buy ${read.upBuy ?? "—"}¢ / ${read.downBuy ?? "—"}¢` : "buy prices not shown"].filter(Boolean).join(" · "));
 
       // timing
-      let ageSecs = ageFromStatusBar(read.clock), ageSource = ageSecs != null ? "phone clock in screenshot" : null;
-      if (ageSecs == null && file.lastModified) { const a = (Date.now() - file.lastModified) / 1000; if (a >= 0 && a < 3 * 3600) { ageSecs = a; ageSource = "file time"; } }
-      if (ageSecs == null) { ageSecs = 0; ageSource = "unknown (assumed just taken)"; }
-      const shotLeft = parseDuration(read.timeLeftText);
-      const secsLeft = shotLeft != null ? shotLeft - ageSecs : null;
+      const tm = resolveClose(read, file);
+      const { ageSecs, ageSource, closeAt } = tm;
 
       // live price
       let spot = null, spotNote = "";
@@ -1013,7 +1010,7 @@ Reply with only this JSON object:
           spot.disagreePct != null ? `sources agree within ${spot.disagreePct.toFixed(3)}%` : null].filter(Boolean).join(" · ") : `Live price unavailable: ${spotNote}. Using the screenshot's price.`);
       } else step("price", "skip", read.asset ? "Alpha Vantage isn't available in this view. Using the screenshot's price." : "No asset read.");
 
-      kState = { read, spot, spotNote, ageSecs, ageSource, secsLeft, setAt: Date.now(), contracts: +$("#contracts").value || 10, review: null, reviewState: "running", example: false };
+      kState = { read, spot, spotNote, ageSecs, ageSource, closeAt, closeNote: tm.note, secsLeft: closeAt != null ? (closeAt - Date.now()) / 1000 : null, contracts: +$("#contracts").value || 10, review: null, reviewState: "running", example: false };
       const m = computeK(kState);
       step("math", "done", m.call === "skip" ? (m.hardSkip[0] || "No side has enough edge after fees.") : `${m.call === "bet_up" ? "Up" : "Down"} shows +${(m.best.ev * 100).toFixed(1)}¢ per contract`);
       renderK(); hasResult = true;
@@ -1053,7 +1050,27 @@ Reply with only this JSON object:
     };
   }
 
-  function secsLeftNow() { return kState && kState.secsLeft != null ? kState.secsLeft - (Date.now() - kState.setAt) / 1000 : null; }
+  function secsLeftNow() { return kState && kState.closeAt != null ? (kState.closeAt - Date.now()) / 1000 : null; }
+  // When does the market close? Screenshot time + countdown, then locked to the quarter hour these markets close on.
+  function resolveClose(read, f) {
+    const now = Date.now(), shotLeft = parseDuration(read.timeLeftText);
+    let shotAt = null, ageSource = "unknown (assumed just taken)";
+    const sbAge = ageFromStatusBar(read.clock);
+    if (sbAge != null) {
+      const minuteStart = now - sbAge * 1000;            // the clock shows hh:mm, so the shot was taken somewhere in that minute
+      const lm = f && f.lastModified;
+      if (lm && lm >= minuteStart - 1000 && lm <= minuteStart + 61000) { shotAt = lm; ageSource = "file time (matches phone clock)"; }
+      else { shotAt = minuteStart + 30000; ageSource = "phone clock in screenshot (±30 s)"; }
+    } else if (f && f.lastModified && now - f.lastModified >= 0 && now - f.lastModified < 3 * 3600 * 1000) { shotAt = f.lastModified; ageSource = "file time"; }
+    if (shotAt == null) shotAt = now;
+    const ageSecs = (now - shotAt) / 1000;
+    if (shotLeft == null) return { ageSecs, ageSource, closeAt: null, note: "No countdown read." };
+    const est = shotAt + shotLeft * 1000, Q = 15 * 60000, snapped = Math.round(est / Q) * Q;
+    if (Math.abs(snapped - est) <= 90000) {
+      return { ageSecs, ageSource, closeAt: snapped, note: `Locked to the ${new Date(snapped).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} close (these markets close on the quarter hour), counting down on your phone's clock.` };
+    }
+    return { ageSecs, ageSource, closeAt: est, note: `Estimated from the screenshot's countdown and clock (${ageSource}).` };
+  }
   function mmss(sec) { if (sec == null) return "—"; if (sec <= 0) return "Closed"; const s = Math.floor(sec); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
   const cents = (x) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1)}¢`);
   const money = (x) => (x == null ? "—" : "$" + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -1061,7 +1078,7 @@ Reply with only this JSON object:
   function renderK() {
     const st = kState; if (!st) return;
     // freeze time-left at render so math and countdown agree
-    if (st.secsLeft != null) { st.secsLeft = secsLeftNow(); st.setAt = Date.now(); }
+    st.secsLeft = secsLeftNow();
     const m = computeK(st), r = st.read, rv = st.review;
     const finalCall = st.reviewState === "done" ? rv.call : m.call;
     const dir = finalCall === "bet_up" ? "up" : finalCall === "bet_down" ? "down" : "skip";
@@ -1128,7 +1145,7 @@ Reply with only this JSON object:
       st.spot ? h("ul", { class: "plain", style: "font-size:0.88rem" }, st.spot.sources.map((x) => h("li", {}, `${x.name}: `, h("b", { class: "num", text: money(x.price) }))), st.spot.notes.map((x) => h("li", { class: "muted", text: x }))) : null,
       h("p", { class: "muted", style: "font-size:0.88rem", text: [
         st.spot ? `Live price from ${st.spot.source} as of ${new Date(st.spot.at).toLocaleTimeString()}${st.spot.disagreePct != null ? `; sources agree within ${st.spot.disagreePct.toFixed(3)}%` : ""}. Kalshi settles on its own index, which can differ slightly.` : `Live price: ${st.spotNote || "not fetched"}.`,
-        `Screenshot age: ${Math.round(st.ageSecs / 60)} min (from ${st.ageSource}).`,
+        `Screenshot age: ${Math.round(st.ageSecs / 60)} min (from ${st.ageSource}). ${st.closeNote || ""}`,
         m.zDist != null ? `The price is ${Math.abs(m.zDist).toFixed(2)} typical moves ${m.zDist >= 0 ? "above" : "below"} the target.` : ""].join(" ") }),
       h("div", { class: "ctrls" },
         h("label", { for: "k-left" }, "Minutes left now", h("input", { type: "number", id: "k-left", class: "numin", min: "0", step: "0.5", inputmode: "decimal", value: secsLeftNow() != null ? Math.max(0, secsLeftNow() / 60).toFixed(1) : "" })),
@@ -1154,7 +1171,7 @@ Reply with only this JSON object:
     // interactions
     countdownTimer = setInterval(() => { const el = $("#cd"); if (el) el.textContent = mmss(secsLeftNow()); }, 1000);
     const left = $("#k-left"), nIn = $("#k-n"), refresh = $("#k-refresh");
-    left.addEventListener("change", () => { const v = num(left.value); if (v != null && v >= 0) { st.secsLeft = v * 60; st.setAt = Date.now(); renderK(); } });
+    left.addEventListener("change", () => { const v = num(left.value); if (v != null && v >= 0) { st.closeAt = Date.now() + v * 60000; st.closeNote = "Set by you."; renderK(); } });
     nIn.addEventListener("change", () => { const v = num(nIn.value); if (v != null && v >= 1) { st.contracts = Math.round(v); $("#contracts").value = String(st.contracts); renderK(); } });
     if (refresh) refresh.addEventListener("click", async () => {
       refresh.disabled = true; const msg = $("#k-msg");
@@ -1174,7 +1191,7 @@ Reply with only this JSON object:
         up_percent: 70, down_percent: 30, up_buy_cents: 71, down_buy_cents: 31, volume: "$48,200", recent_prices: recent, chart_span_minutes: 7, notes: "Fictional example." }),
       spot: { price: 61062, source: "Crypto.com BTC/USD", at: Date.now(), fetchedAt: Date.now(), vol1m: 0.38, mom5: 0.05, mom15: 0.11, disagreePct: 0.012, notes: [],
         sources: [{ name: "Crypto.com BTC/USD", price: 61062 }, { name: "CoinGecko", price: 61055 }],
-        candles: recent.concat([61058, 61064, 61060, 61066, 61070, 61062]).map((c, i, a) => ({ t: Date.now() - (a.length - 1 - i) * 60000, close: c })) }, ageSecs: 0, ageSource: "example", secsLeft: 510, setAt: Date.now(), contracts: 10, reviewState: "done" };
+        candles: recent.concat([61058, 61064, 61060, 61066, 61070, 61062]).map((c, i, a) => ({ t: Date.now() - (a.length - 1 - i) * 60000, close: c })) }, ageSecs: 0, ageSource: "example", closeAt: Date.now() + 510000, closeNote: "", contracts: 10, reviewState: "done" };
     const m = computeK(kState);
     kState.review = cleanReview({ call: m.call, confidence: "low", headline: "BTC is $62 above the target with 8½ minutes left. Up looks slightly underpriced, but not by enough to beat fees safely.",
       reasons: ["Math puts Up near 75% against Kalshi's 70% odds, worth only about +2¢ per contract at 71¢ after fees.", "That's under the 3¢ bar, and it turns into a loss if BTC gets wilder.", "The recent climb is weak evidence over 8 minutes."],
