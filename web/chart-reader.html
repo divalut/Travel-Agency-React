@@ -744,9 +744,9 @@ Reply with only this JSON object:
   const TYPICAL_VOL = { BTC: 0.45, ETH: 0.6, SOL: 0.75, XRP: 0.7, DOGE: 0.85 }; // annualized, rough typical levels
   // Edge rules: minimum expected profit per contract after fees, and the volatility band a bet must survive
   const RULES = {
-    strict: { min: 0.03, lo: 0.6, hi: 1.6, stress: true, text: "Bet only with at least 3¢ profit per contract after fees, and only if it still makes money with BTC moving 40% less or 60% more than now. Very few bets." },
-    standard: { min: 0.02, lo: 0.8, hi: 1.25, stress: true, text: "Bet with at least 2¢ profit per contract after fees, if it still makes money with BTC moving 20% less or 25% more than now." },
-    loose: { min: 0.01, lo: 0.8, hi: 1.25, stress: false, text: "Bet with at least 1¢ profit per contract after fees, no stress test. More bets, thinner edge: some will just be noise." },
+    strict: { min: 0.03, lo: 0.6, hi: 1.6, stress: true, text: "Bet only if the math beats Kalshi's price by at least 3 points after fees ($0.30 profit per 10 contracts), and it still makes money with BTC moving 40% less or 60% more than now. Very few bets." },
+    standard: { min: 0.02, lo: 0.8, hi: 1.25, stress: true, text: "Bet if the math beats Kalshi's price by at least 2 points after fees ($0.20 profit per 10 contracts), and it still makes money with BTC moving 20% less or 25% more than now." },
+    loose: { min: 0.01, lo: 0.8, hi: 1.25, stress: false, text: "Bet if the math beats Kalshi's price by at least 1 point after fees ($0.10 profit per 10 contracts), no stress test. More bets, thinner edge: some will just be noise." },
   };
   function ruleKey() { const el = document.querySelector('input[name="rule"]:checked'); return el && RULES[el.value] ? el.value : "standard"; }
   const MIN_SECONDS = 60;  // too close to the close to act on
@@ -913,6 +913,7 @@ Ground rules:
 - You may only choose bet_up or bet_down if that side passes the edge rule in the math. You may always downgrade to skip.
 - Look for reasons the math could be wrong: misread prices or target, stale screenshot, price sources disagreeing with each other or with the screenshot (Kalshi settles on its own index, which can differ slightly from exchange prices), wide spread, thin volume, very little time left, unclear settlement rules, momentum in recent prices (weak evidence at this horizon), or the price sitting right on the target.
 - Be concrete and brief. Talk to the user directly.
+- Write Kalshi prices as percentages (71%, not 71¢) and profits as dollars for the user's contract count (e.g. +$0.22 on 10 contracts). Never use cents.
 
 DATA:
 ${JSON.stringify(data)}
@@ -1010,7 +1011,7 @@ Reply with only this JSON object:
       step("read", "run", "Claude is reading the market. Usually 15–45 seconds.");
       const read = cleanK(await sample.json(K_READ_PROMPT, { images: file, signal }));
       if (!read.ok) { step("read", "fail", "Not a prediction market screenshot."); say("That doesn't look like a prediction market screenshot. Include the target price, countdown and Up/Down prices.", true); return; }
-      step("read", "done", [read.asset, read.target != null ? `target ${fmt(read.target)}` : "no target read", read.timeLeftText ? `${read.timeLeftText} left` : "no countdown read", read.upPct != null ? `Up ${read.upPct}%` : null, read.downPct != null ? `Down ${read.downPct}%` : null, read.upBuy != null || read.downBuy != null ? `buy ${read.upBuy ?? "—"}¢ / ${read.downBuy ?? "—"}¢` : "buy prices not shown"].filter(Boolean).join(" · "));
+      step("read", "done", [read.asset, read.target != null ? `target ${fmt(read.target)}` : "no target read", read.timeLeftText ? `${read.timeLeftText} left` : "no countdown read", read.upPct != null ? `Up ${read.upPct}%` : null, read.downPct != null ? `Down ${read.downPct}%` : null, read.upBuy != null || read.downBuy != null ? `buy price ${read.upBuy ?? "—"}% / ${read.downBuy ?? "—"}%` : "buy prices not shown"].filter(Boolean).join(" · "));
 
       // timing
       const tm = resolveClose(read, file);
@@ -1028,7 +1029,7 @@ Reply with only this JSON object:
 
       kState = { read, spot, spotNote, ageSecs, ageSource, closeAt, closeNote: tm.note, secsLeft: closeAt != null ? (closeAt - Date.now()) / 1000 : null, contracts: +$("#contracts").value || 10, rule: ruleKey(), review: null, reviewState: "running", example: false };
       const m = computeK(kState);
-      step("math", "done", m.call === "skip" ? (m.hardSkip[0] || "No side has enough edge after fees.") : `${m.call === "bet_up" ? "Up" : "Down"} shows +${(m.best.ev * 100).toFixed(1)}¢ per contract`);
+      step("math", "done", m.call === "skip" ? (m.hardSkip[0] || "No side has enough edge after fees.") : `${m.call === "bet_up" ? "Up" : "Down"} shows ${usdTotal(m.best.ev, m.n)} on ${m.n} contracts`);
       renderK(); hasResult = true;
       $("#result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
 
@@ -1089,6 +1090,7 @@ Reply with only this JSON object:
   }
   function mmss(sec) { if (sec == null) return "—"; if (sec <= 0) return "Closed"; const s = Math.floor(sec); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
   const cents = (x) => (x == null ? "—" : `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1)}¢`);
+  const usdTotal = (ev, n) => (ev == null ? "—" : `${ev >= 0 ? "+" : "−"}$${Math.abs(ev * n).toFixed(2)}`);
   const money = (x) => (x == null ? "—" : "$" + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
   function renderK() {
@@ -1112,14 +1114,14 @@ Reply with only this JSON object:
       h("div", { class: "call", text: dir === "up" ? "▲ Bet Up" : dir === "down" ? "▼ Bet Down" : "Skip" }),
       st.reviewState === "running" ? h("p", { class: "pending", text: "Math result shown. Claude is still double-checking everything…" }) : null,
       st.reviewState === "done" && rv.headline ? h("p", { class: "edge", text: rv.headline }) : null,
-      best ? h("p", { class: "edge" }, "Expected profit ", h("b", { text: cents(best.ev) }), ` per contract if you pay ${best.price}¢${best.assumed ? " (assumed: odds + 1¢)" : ""}, after est. fees. `,
-        best.maxC != null ? h("span", {}, "Don't pay more than ", h("b", { text: `${best.maxC}¢` }), ".") : null)
+      best ? h("p", { class: "edge" }, `Buy ${best.side === "up" ? "Up" : "Down"} at ${best.price}%${best.assumed ? " (assumed: odds + 1)" : ""}. Expected profit `, h("b", { text: usdTotal(best.ev, m.n) }), ` on ${m.n} contract${m.n > 1 ? "s" : ""} after fees. `,
+        best.maxC != null ? h("span", {}, "Don't pay more than ", h("b", { text: `${best.maxC}%` }), ".") : null)
         : m.hardSkip.length ? h("p", { class: "edge", text: m.hardSkip[0] })
         : h("div", { class: "section" },
             st.reviewState === "done" && rv.headline ? null : h("p", { class: "edge", text: `Neither side passes the ${m.ruleName} rule at these prices.` }),
             m.sides.length ? h("ul", { class: "plain" }, m.sides.map((x) => h("li", {},
-              h("b", { text: x.side === "up" ? "Up" : "Down" }), `: math ${Math.round(x.q * 100)}% vs ${x.price}¢ cost → `, h("b", { class: "num", text: cents(x.ev) }), " per contract. ",
-              x.maxC != null ? h("span", {}, "Becomes a bet at ", h("b", { text: `${x.maxC}¢ or less` }), ".") : "Not a bet at any price right now."))) : null),
+              h("b", { text: x.side === "up" ? "Up" : "Down" }), `: math says ${Math.round(x.q * 100)}%, Kalshi costs ${x.price}% → `, h("b", { class: "num", text: usdTotal(x.ev, m.n) }), ` on ${m.n}. `,
+              x.maxC != null ? h("span", {}, "Becomes a bet at ", h("b", { text: `${x.maxC}% or less` }), ".") : "Not a bet at any price right now."))) : null),
       rv && rv.overridden ? h("p", { class: "muted", text: "Claude suggested a bet, but the math shows no real edge after fees, so this stays a skip." }) : null,
       m.pUp != null && m.mktUp != null ? h("div", { class: "meter" },
         h("div", { class: "ticket-top" }, h("span", {}, "Chance it finishes above target: ", h("b", { class: "num", text: `${Math.round(m.pUp * 100)}%` }), " (math)"), h("span", { class: "muted num", text: `Kalshi odds: ${Math.round(m.mktUp * 100)}%` })),
@@ -1142,12 +1144,12 @@ Reply with only this JSON object:
     if (m.sides.length) {
       out.append(h("section", { class: "panel" }, h("h2", { text: "The numbers" }),
         h("div", { class: "tablewrap" }, h("table", { class: "tight" },
-          h("thead", {}, h("tr", {}, ["Side", "Price", "Win %", "Profit", "Calmer", "Wilder"].map((t) => h("th", { text: t })))),
+          h("thead", {}, h("tr", {}, ["Side", "Cost", "Math", `Profit (${m.n})`, "Calmer", "Wilder"].map((t) => h("th", { text: t })))),
           h("tbody", {}, m.sides.map((x) => h("tr", {},
-            h("td", {}, h("b", { text: x.side === "up" ? "Up" : "Down" })), h("td", { class: "v", text: `${x.price}¢${x.assumed ? "*" : ""}` }), h("td", { class: "v", text: `${Math.round(x.q * 100)}%` }),
-            h("td", { class: "v" }, h("span", { class: `tag ${x.evs[1] >= m.rule.min ? "bullish" : x.evs[1] < 0 ? "bearish" : "neutral"}`, text: cents(x.evs[1]) })),
-            h("td", { class: "v", text: cents(x.evs[0]) }), h("td", { class: "v", text: cents(x.evs[2]) })))))),
-        h("p", { class: "muted", style: "font-size:0.85rem", text: `Profit per contract is after Kalshi's estimated taker fee (${m.n} contract${m.n > 1 ? "s" : ""}: ${m.sides.map((x) => `${x.side} ${money(x.fee)}`).join(", ")}). Rule (${m.ruleName}): ${m.rule.text}${m.sides.some((x) => x.assumed) ? " * Buy price wasn't in the screenshot, so the cost is Kalshi's odds plus 1¢. Check the real price on the buy button." : ""}` })));
+            h("td", {}, h("b", { text: x.side === "up" ? "Up" : "Down" })), h("td", { class: "v", text: `${x.price}%${x.assumed ? "*" : ""}` }), h("td", { class: "v", text: `${Math.round(x.q * 100)}%` }),
+            h("td", { class: "v" }, h("span", { class: `tag ${x.evs[1] >= m.rule.min ? "bullish" : x.evs[1] < 0 ? "bearish" : "neutral"}`, text: usdTotal(x.evs[1], m.n) })),
+            h("td", { class: "v", text: usdTotal(x.evs[0], m.n) }), h("td", { class: "v", text: usdTotal(x.evs[2], m.n) })))))),
+        h("p", { class: "muted", style: "font-size:0.85rem", text: `Each contract pays $1 if you're right, so a cost of 71% means $0.71 per contract. Profit is the expected result for ${m.n} contract${m.n > 1 ? "s" : ""} after Kalshi's estimated fee (${m.sides.map((x) => `${x.side} ${money(x.fee)}`).join(", ")}). Rule (${m.ruleName}): ${m.rule.text}${m.sides.some((x) => x.assumed) ? " * Buy price wasn't in the screenshot, so the cost is Kalshi's odds plus 1 point. Check the real price on the buy button." : ""}` })));
     }
 
     // ---- price vs target ----
@@ -1180,8 +1182,8 @@ Reply with only this JSON object:
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Countdown in screenshot" }), h("b", { class: "num", text: r.timeLeftText || "—" })),
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Phone clock" }), h("b", { class: "num", text: r.clock || "—" })),
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Kalshi odds Up / Down" }), h("b", { class: "num", text: `${r.upPct ?? "—"}% / ${r.downPct ?? "—"}%` })),
-        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Buy price Up / Down" }), h("b", { class: "num", text: r.upBuy != null || r.downBuy != null ? `${r.upBuy ?? "—"}¢ / ${r.downBuy ?? "—"}¢` : "Not shown" }),
-          r.upAssumed || r.downAssumed ? h("span", { class: "muted", style: "font-size:0.78rem", text: "Math assumes odds + 1¢" }) : null),
+        h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Buy price Up / Down" }), h("b", { class: "num", text: r.upBuy != null || r.downBuy != null ? `${r.upBuy ?? "—"}% / ${r.downBuy ?? "—"}%` : "Not shown" }),
+          r.upAssumed || r.downAssumed ? h("span", { class: "muted", style: "font-size:0.78rem", text: "Math assumes odds + 1" }) : null),
         h("div", { class: "fact" }, h("span", { class: "eyebrow", text: "Volume" }), h("b", { text: r.volume || "—" }))),
       r.recent.length >= 2 ? reconChart({ price_points: r.recent.map((c, i) => ({ label: i === 0 ? (r.span ? `−${r.span} min` : "start") : i === r.recent.length - 1 ? "now" : "", close: c })), support: [], resistance: [], target: r.target }) : null,
       r.rules ? h("p", { class: "muted", text: `Rules: ${r.rules}` }) : null,
@@ -1214,11 +1216,11 @@ Reply with only this JSON object:
         candles: recent.concat([61058, 61064, 61060, 61066, 61070, 61062]).map((c, i, a) => ({ t: Date.now() - (a.length - 1 - i) * 60000, close: c })) }, ageSecs: 0, ageSource: "example", closeAt: Date.now() + 510000, closeNote: "", contracts: 10, rule: ruleKey(), reviewState: "done" };
     const m = computeK(kState);
     kState.review = cleanReview({ call: m.call, confidence: "low", headline: m.call === "bet_up" ? "BTC is $62 above the target with 8½ minutes left and Up is priced a little low. Thin edge: only the Loose setting takes it." : "BTC is $62 above the target with 8½ minutes left. Up looks slightly underpriced, but not by enough to beat fees safely.",
-      reasons: ["Math puts Up near 75% against Kalshi's 70% odds, about +2¢ per contract at 71¢ after fees.", "If BTC gets a bit wilder that turns into a loss, so it doesn't pass at 71¢. A cheaper fill would.", "The recent climb is weak evidence over 8 minutes."],
-      checks: [{ name: "Prices read correctly", status: "pass", detail: "Odds 70% / 30%, buy 71¢ / 31¢, target $61,000." }, { name: "Time left", status: "pass", detail: "8:30 is enough time to place an order." },
-        { name: "Live price sources agree", status: "pass", detail: "Crypto.com and CoinGecko are $7 apart." }, { name: "Volatility right now", status: "pass", detail: "Measured 38%/yr, a bit calmer than usual." }, { name: "Edge after fees", status: "warn", detail: "Up is about +2¢, but not if volatility rises." },
-        { name: "Spread and liquidity", status: "pass", detail: "2¢ spread, decent volume." }, { name: "Momentum", status: "warn", detail: "Up-drift over 7 minutes, but that rarely persists." }],
-      what_would_change_it: "Up dropping to about 62¢ or less while BTC stays $60+ above the target." }, m);
+      reasons: ["Math puts Up near 75% against Kalshi's 70% odds. Buying at 71% makes about +$0.22 on 10 contracts after fees.", "If BTC gets a bit wilder that turns into a loss, so it doesn't pass at 71%. A cheaper fill would.", "The recent climb is weak evidence over 8 minutes."],
+      checks: [{ name: "Prices read correctly", status: "pass", detail: "Odds 70% / 30%, buy price 71% / 31%, target $61,000." }, { name: "Time left", status: "pass", detail: "8:30 is enough time to place an order." },
+        { name: "Live price sources agree", status: "pass", detail: "Crypto.com and CoinGecko are $7 apart." }, { name: "Volatility right now", status: "pass", detail: "Measured 38%/yr, a bit calmer than usual." }, { name: "Edge after fees", status: "warn", detail: "Up is about +$0.22 on 10, but not if volatility rises." },
+        { name: "Spread and liquidity", status: "pass", detail: "2-point spread, decent volume." }, { name: "Momentum", status: "warn", detail: "Up-drift over 7 minutes, but that rarely persists." }],
+      what_would_change_it: "Up dropping to about 68% or less while BTC stays $60+ above the target." }, m);
     renderK();
   }
 
